@@ -102,6 +102,8 @@ def _train(args):
                                   collate_fn=pad_and_combine_instances)
         train_tqdm = tqdm(train_loader, desc='[T] Loss: NA')
         train_losses = []
+        optimizer.zero_grad()
+
         for instance in train_tqdm:
             if args.cuda:
                 instance = {key: value.cuda(args.cuda_device) for key, value in instance.items()}
@@ -112,13 +114,13 @@ def _train(args):
             loss = output_dict['loss'].mean()
 
             # update gradients
-            optimizer.zero_grad()
             if args.fp16:
                 with amp.scale_loss(loss,  optimizer) as scaled_loss:
                     scaled_loss.backward()
             else:
                 loss.backward()
             optimizer.step()
+            optimizer.zero_grad()
 
             # Report Losses
             train_losses.append(loss.item())
@@ -134,6 +136,7 @@ def _train(args):
                                        collate_fn=pad_and_combine_instances)
         validation_tqdm = tqdm(validation_loader, desc='[V] Loss: NA')
         validation_losses = []
+
         for instance in validation_tqdm:
             if args.cuda:
                 instance = {key: value.cuda(args.cuda_device) for key, value in instance.items()}
