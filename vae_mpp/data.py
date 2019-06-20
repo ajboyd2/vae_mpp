@@ -1,6 +1,6 @@
 from collections import defaultdict
 import logging
-from parser import findall
+from parse import findall
 
 import torch
 from torch.utils.data import Dataset
@@ -69,7 +69,7 @@ class PointPatternDataset(Dataset):
         instances = []
         with open(file_path, 'r') as f:
             for line in f:
-                items = [(float(r.fixed[0]), int(r.fixed[1])) for r in p.findall("({},{})", line.strip())]
+                items = [(float(r.fixed[0]), int(r.fixed[1])) for r in findall("({},{})", line.strip())]
                 times, marks = zip(*items)
                 instances.append({
                     "times": times,
