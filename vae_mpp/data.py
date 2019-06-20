@@ -32,7 +32,7 @@ def pad_and_combine_instances(batch):
                     size = (batch_size,)
                 out_dict[field] = tensor.new_zeros(size)
             if field in max_field_lengths:
-                out_dict[field][i, :tensor.size()[0]] = tensor
+                out_dict[field][i, -tensor.size()[0]:] = tensor  # prepend padding for efficiency due to sorting
             else:
                 out_dict[field][i] = tensor
 
