@@ -8,7 +8,7 @@ _activations = {
     'identity': lambda x: (lambda y: y)(x)
 }
 
-class PP_Decoder(nn.Module):
+class PPDecoder(nn.Module):
 
     def __init__(self,
                  num_events,
@@ -20,7 +20,7 @@ class PP_Decoder(nn.Module):
                  intensity_num_layers,
                  intensity_act_func,
                  layer_norm):
-        super(PP_Decoder, self).__init__()
+        super(PPDecoder, self).__init__()
 
         self.num_events = num_events
         self.latent_size = latent_size
