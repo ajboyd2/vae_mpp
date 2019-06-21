@@ -1,0 +1,16 @@
+model:
+    name: "decoder_only"
+    vocab_size: 4356
+    embedding_dim: 32
+    num_lstm_units: 64
+    num_lstm_layers: 1
+optimizer:
+    name: "adam"
+    lr: 0.0003  # The best learning rate ever.
+    weight_decay: 0.000001
+training:
+    epochs: 100
+    batch_size: 32  # Or however much you can fit.
+    chunk_size: 400
+train_data: "/home/alexjb/Courses/CS 295/dgm-final-project/maestro-v2.0.0-tokenized/train.txt"
+validation_data: "/home/alexjb/Courses/CS 295/dgm-final-project/maestro-v2.0.0-tokenized/validation.txt"
