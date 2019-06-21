@@ -110,7 +110,7 @@ class PointProcess(ABC):
 class InhomogenousPoissonProcess(PointProcess):
 
     def __init__(self, K, scale, right_limit):
-        super().__init__(self, conditional=False)
+        super().__init__(conditional=False)
         self.K = K
         self.scale = scale
         self.mu = rand.rand(K) * right_limit
@@ -133,7 +133,7 @@ class InhomogenousPoissonProcess(PointProcess):
 class SelfCorrectingProcess(PointProcess):
 
     def __init__(self, K):
-        super().__init__(self, conditional=True)
+        super().__init__(conditional=True)
         self.K = K
         self.func = SoftPlus(K)
         self.eta = (rand.rand(K) - 0.1) * 3 / K
@@ -175,7 +175,7 @@ class SelfCorrectingProcess(PointProcess):
 class SelfExcitingProcess(PointProcess):
 
     def __init__(self, K):
-        super().__init__(self, conditional=True)
+        super().__init__(conditional=True)
         self.K = K
         self.func = SoftPlus(K)
         self.mu = (rand.rand(K) - 0.5) * 3 / K
@@ -220,7 +220,7 @@ class SelfExcitingProcess(PointProcess):
 class SelfModulatingProcess(PointProcess):
 
     def __init__(self, K):
-        super().__init__(self, conditional=True)
+        super().__init__(conditional=True)
         self.K = K
         self.func = SoftPlus(K)
         self.mu = (rand.rand(K) - 0.5) * 3 / K
@@ -267,3 +267,13 @@ class SelfModulatingProcess(PointProcess):
 
     def __repr__(self):
         return str(self.__dict__)
+
+def PointProcessFactory(pp_args):
+
+    pp_obj = SelfExcitingProcess(pp_args["K"])
+
+    for k,v in pp_args.items():
+        pp_obj.__dict__[k] = v
+
+    return pp_obj
+
