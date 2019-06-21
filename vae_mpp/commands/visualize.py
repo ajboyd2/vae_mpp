@@ -18,6 +18,7 @@ import seaborn as sns
 
 from vae_mpp.data import PointPatternDataset, pad_and_combine_instances
 from vae_mpp.models import Model
+from vae_mpp.parametric_pp import PointProcessFactory
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def _visualize(args):
         vis_output_dir.mkdir()
 
     # Set up logging
-    fh = logging.FileHandler(args.output_dir / 'output.log')
+    fh = logging.FileHandler(args.model_dir / 'output.log')
     logging.getLogger().addHandler(fh)
 
     torch.manual_seed(config.get('seed', 5150))
@@ -61,7 +62,8 @@ def _visualize(args):
     eval_dataset = PointPatternDataset(config['evaluation_data'])
     if "point_process_objects" in config:
         with open(config["point_process_objects"], "rb") as f:
-            pp_objs = pickle.load(f)
+            pp_obj_dicts = pickle.load(f)
+        pp_objs = [PointProcessFactory(d) for d in pp_obj_dicts]
     else:
         pp_objs = None
 
@@ -85,6 +87,27 @@ def _visualize(args):
         model_intensities = torch.exp(output["log_intensities"] + output["log_probs"]).squeeze()
         model_intensities = np.array(model_intensities)
 
+        print(model_intensities.shape)
+        print(model_intensities)
+        for k, v in instance.items():
+            try:
+                print(k, "-", v.shape)
+            except:
+                try:
+                    print(k, "-", len(v))
+                except:
+                    print(k)
+
+        for k, v in output.items():
+            try:
+                print(k, "-", v.shape)
+            except:
+                try:
+                    print(k, "-", len(v))
+                except:
+                    print(k)
+
+        sys.exit()
         for k in range(model_intensities.shape[1]):
             ax.plot(all_times, model_intensities[:, k], color=colors[k], label="Model - k={}".format(k))
 

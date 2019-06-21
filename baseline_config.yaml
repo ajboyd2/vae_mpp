@@ -23,4 +23,4 @@ training:
 train_data: "/home/alexjb/Research/vae_mpp/data/15_pps/training.pickle"
 validation_data: "/home/alexjb/Research/vae_mpp/data/15_pps/validation.pickle"
 evaluation_data: "/home/alexjb/Research/vae_mpp/data/15_pps/eval.pickle"
-point_process_objects: "/home/alexjb/Research/vae_mpp/data/15_pps/interesting_pp_objs.pickle"
+point_process_objects: "/home/alexjb/Research/vae_mpp/data/15_pps/interesting_pp_objs_dicts.pickle"
