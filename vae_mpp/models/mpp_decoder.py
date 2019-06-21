@@ -93,6 +93,7 @@ class MPPDecoder(nn.Module):
             torch.zeros_like(output["log_intensities"].squeeze())
         ).sum(dim=0) / mc_samples
 
+        output["all_times"] = times_sorted
         output["log_sum"] = log_sum
         output["int_approx"] = int_approx
         output["loss"] = -1 * (log_sum - int_approx)  # loss is negative log likelihood
