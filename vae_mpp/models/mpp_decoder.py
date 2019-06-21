@@ -43,6 +43,12 @@ class MPPDecoder(nn.Module):
         self.register_buffer("eye", torch.eye(num_events))
 
     def forward(self, times, marks, padding_mask=None, mc_samples=100, T=None, **kwargs):
+
+        times = times.t().contiguous()
+        marks = marks.t().contiguous()
+        if padding_mask is not None:
+            padding_mask = padding_mask.t().contiguous()
+
         _, batch_size = times.shape
 
         if T is None:
