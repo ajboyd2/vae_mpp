@@ -110,6 +110,7 @@ def _train(args):
 
             # Process Batch
             instance["mc_samples"] = train_config.get("train_mc_samples", 100)
+            instance["T"] = train_config.get("train_right_window", None)
             output_dict = model(**instance)
             loss = output_dict['loss'].mean()
 
@@ -144,6 +145,7 @@ def _train(args):
             with torch.no_grad():
                 # Process Batch
                 instance["mc_samples"] = train_config.get("valid_mc_samples", 500)
+                instance["T"] = train_config.get("valid_right_window", None)
                 output_dict = model(**instance)
                 loss = output_dict['loss'].mean()
 

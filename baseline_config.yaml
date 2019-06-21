@@ -16,5 +16,9 @@ optimizer:
 training:
     epochs: 5
     batch_size: 32
+    train_mc_samples: 100
+    valid_mc_samples: 500
+    train_right_window: 50
+    valid_right_window: 50
 train_data: "/home/alexjb/Research/vae_mpp/data/15_pps/training.pickle"
 validation_data: "/home/alexjb/Research/vae_mpp/data/15_pps/training.pickle"

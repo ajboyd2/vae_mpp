@@ -42,10 +42,13 @@ class MPPDecoder(nn.Module):
 
         self.register_buffer("eye", torch.eye(num_events))
 
-    def forward(self, times, marks, padding_mask=None, mc_samples=100, **kwargs):
+    def forward(self, times, marks, padding_mask=None, mc_samples=100, T=None, **kwargs):
         _, batch_size = times.shape
 
-        T = times.max(dim=0)[0]
+        if T is None:
+            T = times.max(dim=0)[0]
+        else:
+            T = torch.ones_like(times.max(dim=0)[0]) * T  # T is assumed to be a float
         u = T.unsqueeze(0) * torch.rand_like(T.unsqueeze(0).expand(mc_samples, batch_size))
 
         if padding_mask is None:
