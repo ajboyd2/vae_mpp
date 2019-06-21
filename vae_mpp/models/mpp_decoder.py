@@ -95,5 +95,5 @@ class MPPDecoder(nn.Module):
 
         output["log_sum"] = log_sum
         output["int_approx"] = int_approx
-        output["NLL"] = -1 * (log_sum - int_approx)
+        output["loss"] = -1 * (log_sum - int_approx)  # loss is negative log likelihood
         return output

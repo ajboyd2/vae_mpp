@@ -82,6 +82,6 @@ class PointPatternDataset(Dataset):
                         "marks": marks
                     })
         logger.debug('Max seq. len: %i', max(len(x) for x in instances))
-        vocab_size = max(k for instance in instances for _, k in instance)
+        vocab_size = max(max(instance["marks"]) for instance in instances)
 
         return instances, vocab_size
