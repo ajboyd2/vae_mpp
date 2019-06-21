@@ -1,16 +1,20 @@
 model:
     name: "decoder_only"
-    vocab_size: 4356
-    embedding_dim: 32
-    num_lstm_units: 64
-    num_lstm_layers: 1
+    num_events: 3
+    event_embedding_size: 32
+    time_embedding_size: 32
+    hidden_size: 64
+    latent_size: 0
+    intensity_layer_size: 16
+    intensity_num_layers: 2
+    intensity_act_func: "relu"
+    layer_norm: "identity"
 optimizer:
     name: "adam"
-    lr: 0.0003  # The best learning rate ever.
-    weight_decay: 0.000001
+#    lr: 0.0003
+#    weight_decay: 0.000001
 training:
-    epochs: 100
-    batch_size: 32  # Or however much you can fit.
-    chunk_size: 400
-train_data: "/home/alexjb/Courses/CS 295/dgm-final-project/maestro-v2.0.0-tokenized/train.txt"
-validation_data: "/home/alexjb/Courses/CS 295/dgm-final-project/maestro-v2.0.0-tokenized/validation.txt"
+    epochs: 5
+    batch_size: 32
+train_data: "/home/alexjb/Research/vae_mpp/data/15_pps/training.pickle"
+validation_data: "/home/alexjb/Research/vae_mpp/data/15_pps/training.pickle"

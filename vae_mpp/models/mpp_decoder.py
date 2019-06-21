@@ -12,7 +12,13 @@ class MPPDecoder(nn.Module):
                  num_events,
                  event_embedding_size,
                  time_embedding_size,
-                 decoder_options):
+                 hidden_size,
+                 latent_size,
+                 intensity_layer_size,
+                 intensity_num_layers,
+                 intensity_act_func,
+                 layer_norm,
+                 **kwargs):
         super(MPPDecoder, self).__init__()
 
         self.num_events = num_events
@@ -22,7 +28,17 @@ class MPPDecoder(nn.Module):
         self.event_embeddings = nn.Embedding(num_events, event_embedding_size)
         self.time_embeddings = TimeEmbedding(time_embedding_size)
 
-        self.decoder = PPDecoder(**decoder_options)
+        self.decoder = PPDecoder(
+            num_events=num_events,
+            hidden_size=hidden_size,
+            event_embedding_size=event_embedding_size,
+            time_embedding_size=time_embedding_size,
+            latent_size=latent_size,
+            intensity_layer_size=intensity_layer_size,
+            intensity_num_layers=intensity_num_layers,
+            intensity_act_func=intensity_act_func,
+            layer_norm=layer_norm
+        )
 
         self.register_buffer("eye", torch.eye(num_events))
 
