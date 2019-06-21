@@ -20,3 +20,5 @@ training:
     valid_mc_samples: 500
 train_data: "/home/alexjb/Research/vae_mpp/data/1_pp/training.pickle"
 validation_data: "/home/alexjb/Research/vae_mpp/data/1_pp/validation.pickle"
+evaluation_data: "/home/alexjb/Research/vae_mpp/data/1_pp/eval.pickle"
+point_process_objects: "/home/alexjb/Research/vae_mpp/data/1_pp/single_pp_obj.pickle"
