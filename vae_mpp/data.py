@@ -1,6 +1,7 @@
 from collections import defaultdict
 import logging
 from parse import findall
+import pickle
 
 import torch
 from torch.utils.data import Dataset
@@ -66,15 +67,20 @@ class PointPatternDataset(Dataset):
     def read_instances(self, file_path):
         """Load PointProcessDataset from a file"""
 
-        instances = []
-        with open(file_path, 'r') as f:
-            for line in f:
-                items = [(float(r.fixed[0]), int(r.fixed[1])) for r in findall("({},{})", line.strip())]
-                times, marks = zip(*items)
-                instances.append({
-                    "times": times,
-                    "marks": marks
-                })
+        if ".pickle" in file_path:
+            with open(file_path, "rb") as f:
+                collection = pickle.load(f)
+            instances = collection["sequences"]
+        else:
+            with open(file_path, 'r') as f:
+                instances = []
+                for line in f:
+                    items = [(float(r.fixed[0]), int(r.fixed[1])) for r in findall("({},{})", line.strip())]
+                    times, marks = zip(*items)
+                    instances.append({
+                        "times": times,
+                        "marks": marks
+                    })
         logger.debug('Max seq. len: %i', max(len(x) for x in instances))
         vocab_size = max(k for instance in instances for _, k in instance)
 
