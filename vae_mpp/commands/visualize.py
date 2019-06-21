@@ -87,27 +87,6 @@ def _visualize(args):
         model_intensities = torch.exp(output["log_intensities"] + output["log_probs"]).squeeze()
         model_intensities = np.array(model_intensities)
 
-        print(model_intensities.shape)
-        print(model_intensities)
-        for k, v in instance.items():
-            try:
-                print(k, "-", v.shape)
-            except:
-                try:
-                    print(k, "-", len(v))
-                except:
-                    print(k)
-
-        for k, v in output.items():
-            try:
-                print(k, "-", v.shape)
-            except:
-                try:
-                    print(k, "-", len(v))
-                except:
-                    print(k)
-
-        sys.exit()
         for k in range(model_intensities.shape[1]):
             ax.plot(all_times, model_intensities[:, k], color=colors[k], label="Model - k={}".format(k))
 
@@ -119,7 +98,7 @@ def _visualize(args):
             pp_obj.clear()
             for t,m in zip(actual_times, actual_marks):
                 pp_obj.update(t, m, 0)
-            actual_intensities = pp_obj.intensity(all_times)
+            actual_intensities = np.array([pp_obj.intensity(t=t, batch=0).squeeze() for t in all_times])
 
             for k in range(model_intensities.shape[1]):
                 ax.plot(all_times, actual_intensities[:, k], color=colors[k], alpha=0.5, linestyle='dashed', label="Real  - k={}".format(k))
