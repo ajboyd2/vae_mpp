@@ -12,6 +12,8 @@ class MPPDecoder(nn.Module):
                  num_events,
                  event_embedding_size,
                  time_embedding_size,
+                 raw_time,
+                 delta_time,
                  hidden_size,
                  latent_size,
                  intensity_layer_size,
@@ -26,7 +28,20 @@ class MPPDecoder(nn.Module):
         self.time_embedding_size = time_embedding_size
 
         self.event_embeddings = nn.Embedding(num_events, event_embedding_size)
-        self.time_embeddings = TimeEmbedding(time_embedding_size)
+
+        if not (raw_time or delta_time):
+            raise AttributeError("At most, only one of 'raw_time' or 'delta_time' can be False.")
+
+        self.time_embeddings = TimeEmbedding(
+            time_embedding_dim=time_embedding_size,
+            raw_frequency=raw_time,
+            raw_decay=False,
+            delta_frequency=delta_time,
+            delta_decay=delta_time,
+            learnable_frequency=False,
+            learnable_decay=True,
+            weight_share=True
+        )
 
         self.decoder = PPDecoder(
             num_events=num_events,
