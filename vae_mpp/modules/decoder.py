@@ -78,7 +78,8 @@ class PPDecoder(nn.Module):
             "log_probs": [],
             "pre_out": [],
             "hidden_states": [],
-            "mask": mask
+            "mask": mask,
+            "latent_state": latent_state
         }
 
         for i in range(seq_len):
