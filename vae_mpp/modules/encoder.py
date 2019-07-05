@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 _activations = {
     'relu': nn.ReLU,
@@ -19,38 +20,69 @@ class PPEncoder(nn.Module):
                  bidirectional,
                  rnn_layers,
                  aggregation_style,
-                 var_act,
+                 var_act='identity',
                  dropout=0.0
     ):
+        super(PPEncoder, self).__init__()
 
         self.latent_size = latent_size
-        hidden_size = latent_size * 2
+        self.hidden_size = latent_size * 2
 
         self.rnn = nn.GRU(
             input_size=event_embedding_dim + time_embedding_dim,
-            hidden_size=hidden_size,
+            hidden_size=self.hidden_size,
             bidirectional=bidirectional,
             bias=True,
+            batch_first=False,
             num_layers=rnn_layers,
             dropout=dropout)
 
         if aggregation_style == "concatenation":
-            self.aggregation = lambda output: torch.cat((output[-1, :, :hidden_size], output[0, :, hidden_size:]),
-                                                        dim=-1)
+            self.aggregation = self._concatenation
         elif aggregation_style == "mean":
-            self.aggregation = lambda output: torch.mean(output, dim=0)
+            self.aggregation = self._mean
         elif aggregation_style == "max":
-            self.aggregation = lambda output: torch.max(output, dim=0)
+            self.aggregation = self._max
         elif aggregation_style == "attention":
-            raise NotImplemented
+            raise NotImplementedError
         else:
             raise LookupError("aggregation_style '{}' not supported.".format(aggregation_style))
 
         self.var_act = _activations[var_act]
 
-    def forward(self, batch):
-        # batch.shape = (sequence_length, batch_size, embedding_dim+1)
+    def _concatenation(self, output, mask=None):
+        if mask is None:
+            return torch.cat((output[-1, :, :self.hidden_size], output[0, :, self.hidden_size:]), dim=-1)
+        raise NotImplementedError
+
+
+    def _mean(self, output, mask=None):
+        if mask is None:
+            return torch.mean(output, dim=0)
+
+        return torch.where(
+            condition=mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
+            self=output,
+            other=torch.zeros_like(output)
+        ).sum(dim=0) / mask.sum(dim=0).float()
+
+    def _max(self, output, mask=None):
+        if mask is None:
+            return torch.max(output, dim=0)[0]
+
+        return torch.where(
+            condition=mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
+            self=output,
+            other=torch.ones_like(output) * (-np.inf)
+        ).max(dim=0)[0]
+
+    def _attention(selfs, output, mask=None):
+        raise NotImplemented
+
+    def forward(self, time_embed, mark_embed, mask=None):
+        # batch.shape = (sequence_length, batch_size, mark_embedding_dim+time_embedding_dim)
+        batch = torch.cat((time_embed, mark_embed), dim=-1)
         output, _ = self.rnn(batch)
-        pooled_output = self.aggregation(output)
+        pooled_output = self.aggregation(output, mask)
         mu, sigma = pooled_output[:, ::2], self.var_act(pooled_output[:, 1::2])
         return mu, sigma
