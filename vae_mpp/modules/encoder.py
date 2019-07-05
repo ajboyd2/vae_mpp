@@ -26,7 +26,7 @@ class PPEncoder(nn.Module):
         super(PPEncoder, self).__init__()
 
         self.latent_size = latent_size
-        self.hidden_size = latent_size * 2
+        self.hidden_size = latent_size * (1 if bidirectional else 2)
 
         self.rnn = nn.GRU(
             input_size=event_embedding_dim + time_embedding_dim,
@@ -61,9 +61,9 @@ class PPEncoder(nn.Module):
             return torch.mean(output, dim=0)
 
         return torch.where(
-            condition=mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
-            self=output,
-            other=torch.zeros_like(output)
+            mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
+            output,
+            torch.zeros_like(output)
         ).sum(dim=0) / mask.sum(dim=0).float()
 
     def _max(self, output, mask=None):
@@ -71,9 +71,9 @@ class PPEncoder(nn.Module):
             return torch.max(output, dim=0)[0]
 
         return torch.where(
-            condition=mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
-            self=output,
-            other=torch.ones_like(output) * (-np.inf)
+            mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
+            output,
+            torch.ones_like(output) * (-np.inf)
         ).max(dim=0)[0]
 
     def _attention(selfs, output, mask=None):

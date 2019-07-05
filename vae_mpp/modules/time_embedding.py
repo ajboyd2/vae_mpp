@@ -34,7 +34,7 @@ class TimeEmbedding(nn.Module):
             self.raw_freq_weights = None
 
         if raw_decay:
-            raw_decay_weights = 1 / (20 + torch.rand(working_embedding_size // 2) * 30)
+            raw_decay_weights = 1 / (20 + torch.rand(int(working_embedding_size // 2)) * 30)
             if learnable_decay:
                 self.raw_decay_weights = nn.Parameter(raw_decay_weights)
             else:
@@ -58,7 +58,7 @@ class TimeEmbedding(nn.Module):
             if raw_decay and weight_share:
                 self.delta_decay_weights = self.raw_decay_weights
             else:
-                delta_decay_weights = 1 / (20 + torch.rand(working_embedding_size // 2) * 30)
+                delta_decay_weights = 1 / (20 + torch.rand(int(working_embedding_size // 2)) * 30)
                 if learnable_decay:
                     self.delta_decay_weights = nn.Parameter(delta_decay_weights)
                 else:
@@ -72,36 +72,48 @@ class TimeEmbedding(nn.Module):
         purposes and do not represent true events.
         '''
 
+        assert(len(t.shape) == 3)
+        assert(t.shape[-1] == 1)
+
         if (self.delta_decay_weights is None) and (self.delta_freq_weights == 0):
             return torch.cat((
                 torch.cos(t * self.raw_freq_weights) * torch.exp(-t * self.raw_decay_weights.abs()),
                 torch.sin(t * self.raw_freq_weights) * torch.exp(-t * self.raw_decay_weights.abs())
             ), dim=-1)
         else:
-            ref_t = torch.zeros_like(t[0, :])  # slice across batches along the first time step
+            ref_t = torch.zeros_like(t[0, :, :])  # slice across batches along the first time step
             deltas = []
 
             if sample_map is None:
                 sample_map = torch.ones_like(t, dtype=torch.uint8)
+            else:
+                sample_map = sample_map.unsqueeze(-1).expand(-1, -1, t.shape[-1])
 
             for i in range(t.shape[0]):
-                deltas.append(t[i, :] - ref_t)
-                ref_t = torch.where(sample_map[i, :], t[i, :], ref_t)
+                deltas.append(t[i, :, :] - ref_t)
+                ref_t = torch.where(sample_map[i, :, :], t[i, :, :], ref_t)
 
             d = torch.stack(deltas, dim=0)
 
             assert(d.shape[0] == t.shape[0])
             assert(d.shape[1] == t.shape[1])
+            assert(d.shape[2] == t.shape[2])
 
-            if (self.raw_freq_weights is None) or (self.raw_decay_weights == 0):
+            if self.raw_freq_weights is None:
+                freq_mult = d * self.delta_freq_weights
+                decay_mult = torch.exp(-d * abs(self.delta_decay_weights))
                 return torch.cat((
-                    torch.cos(d * self.delta_freq_weights) * torch.exp(-d * self.delta_decay_weights.abs()),
-                    torch.sin(d * self.delta_freq_weights) * torch.exp(-d * self.delta_decay_weights.abs())
+                    torch.cos(freq_mult) * decay_mult,
+                    torch.sin(freq_mult) * decay_mult
                 ), dim=-1)
             else:
+                del_freq_mult = d * self.delta_freq_weights
+                del_decay_mult = torch.exp(-d * abs(self.delta_decay_weights))
+                raw_freq_mult = t * self.raw_freq_weights
+                raw_decay_mult = torch.exp(-t * abs(self.raw_decay_weights))
                 return torch.cat((
-                    torch.cos(d * self.delta_freq_weights) * torch.exp(-d * self.delta_decay_weights.abs()),
-                    torch.sin(d * self.delta_freq_weights) * torch.exp(-d * self.delta_decay_weights.abs()),
-                    torch.cos(t * self.raw_freq_weights) * torch.exp(-t * self.raw_decay_weights.abs()),
-                    torch.sin(t * self.raw_freq_weights) * torch.exp(-t * self.raw_decay_weights.abs())
+                    torch.cos(del_freq_mult) * del_decay_mult,
+                    torch.sin(del_freq_mult) * del_decay_mult,
+                    torch.cos(raw_freq_mult) * raw_decay_mult,
+                    torch.sin(raw_freq_mult) * raw_decay_mult
                 ), dim=-1)

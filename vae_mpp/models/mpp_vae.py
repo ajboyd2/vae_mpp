@@ -115,7 +115,7 @@ class MPPVae(nn.Module):
 
         # encode
         mu, log_sigma_sq = self.encoder(
-            time_embed=self.time_embeddings(enc_times),
+            time_embed=self.time_embeddings(enc_times.unsqueeze(-1)),
             mark_embed=self.event_embeddings(enc_marks),
             mask=padding_mask
         )
@@ -159,7 +159,7 @@ class MPPVae(nn.Module):
         original_events_mask = mask_sorted == 1
         sample_events_mask = mask_sorted == 0
 
-        time_embed = self.time_embeddings(times_sorted.unsqueeze(-1))
+        time_embed = self.time_embeddings(times_sorted.unsqueeze(-1), mask_sorted)
         mark_embed = self.event_embeddings(marks_sorted)
 
         output = self.decoder(
