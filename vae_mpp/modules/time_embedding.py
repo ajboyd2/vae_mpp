@@ -64,7 +64,7 @@ class TimeEmbedding(nn.Module):
                 else:
                     self.register_buffer("delta_decay_weights", delta_decay_weights)
         else:
-            self.raw_decay_weights = 0
+            self.delta_decay_weights = 0
 
     def forward(self, t, sample_map=None):
         '''
@@ -75,10 +75,10 @@ class TimeEmbedding(nn.Module):
         assert(len(t.shape) == 3)
         assert(t.shape[-1] == 1)
 
-        if (self.delta_decay_weights is None) and (self.delta_freq_weights == 0):
+        if (self.delta_freq_weights is None) and (self.delta_decay_weights == 0):
             return torch.cat((
-                torch.cos(t * self.raw_freq_weights) * torch.exp(-t * self.raw_decay_weights.abs()),
-                torch.sin(t * self.raw_freq_weights) * torch.exp(-t * self.raw_decay_weights.abs())
+                torch.cos(t * self.raw_freq_weights) * torch.exp(-t * abs(self.raw_decay_weights)),
+                torch.sin(t * self.raw_freq_weights) * torch.exp(-t * abs(self.raw_decay_weights))
             ), dim=-1)
         else:
             ref_t = torch.zeros_like(t[0, :, :])  # slice across batches along the first time step
