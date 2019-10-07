@@ -1,6 +1,7 @@
 import argparse
-from utils import print_log
 import json
+
+from .utils import print_log
 
 
 def general_args(parser):
