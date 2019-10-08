@@ -5,7 +5,6 @@ from vae_mpp.modules import PPDecoder, TimeEmbedding
 from vae_mpp.models import Model
 
 
-@Model.register('decoder_only')
 class MPPDecoder(nn.Module):
 
     def __init__(self,
