@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .utils import truncated_normal
+from .utils import xavier_truncated_normal
 
 
 class SinusoidalEmbedding(nn.Module):
@@ -16,7 +16,7 @@ class SinusoidalEmbedding(nn.Module):
 
         self.random = random
         if random:
-            weight = truncated_normal(size=embedding_dim//2, scale=0.01, limit=2)
+            weight = xavier_truncated_normal(size=embedding_dim//2, scale=0.01, limit=2)
         else:
             weight = torch.exp(torch.arange(0, embedding_dim, 2).float() * (-math.log(10000.0) / embedding_dim))
     
@@ -112,6 +112,8 @@ class TemporalEmbedding(nn.Module):
             )
         else:
             self.delta_time_embed = None
+        
+        self.embedding_dim = embedding_dim
 
     @staticmethod
     def compute_deltas(t, true_times):
