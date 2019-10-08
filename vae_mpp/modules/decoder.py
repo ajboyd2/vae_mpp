@@ -1,12 +1,86 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-_activations = {
+from .utils import xavier_truncated_normal, flatten
+
+ACTIVATIONS = {
     'relu': nn.ReLU,
     'sigmoid': nn.Sigmoid,
     'tanh': nn.Tanh,
     'identity': lambda x: (lambda y: y)(x)
 }
+
+class IntensityNet(nn.Module):
+
+    def __init__(
+        self,
+        channel_embedding,
+        input_size,
+        hidden_size,
+        num_layers,
+        act_func,
+        dropout,
+    ):
+        super().__init__()
+
+        self.channel_embedding = channel_embedding
+        channel_embedding_dim = channel_embedding._weight.shape[-1]
+
+        if isinstance(act_func, str):
+            act_func = ACTIVATIONS[act_func]
+        
+        preprocessing_layers = [(nn.Linear(input_size, hidden_size), act_func(), nn.Dropout(p=dropout))]
+        preprocessing_layers.extend([(nn.Linear(hidden_size, hidden_size), act_func(), nn.Dropout(p=dropout)) for _ in range(num_layers-1)])
+        self.preprocessing_net = nn.Sequential(*flatten(preprocessing_layers))
+
+        self.mark_net = nn.Linear(hidden_size, channel_embedding_dim)
+        self.intensity_net = nn.Linear(hidden_size, 1)
+
+    def forward(self, *args):
+        x = torch.cat(args, dim=-1)
+        assert(x.shape[-1] == self.input_size)
+
+        pre_out = self.preprocessing_net(x)
+        mark_logits = F.linear(self.mark_net(pre_out), self.channel_embedding._weight)  # No bias by default
+        intensity_logit = self.intensity_net(pre_out)
+
+        return {
+            "mark_logits": mark_logits,
+            "intensity_logit": intensity_logit,
+        }
+
+class PPDecoder(nn.Module):
+
+    def __init__(
+        self,
+        num_channels,
+        channel_embedding_size,
+        time_embedding,
+        intensity_net_args,
+        hidden_size,
+        latent_size=None,
+    ):
+        super().__init__()
+
+        self.num_channels = num_channels
+        self.channel_embeddings = nn.Embedding(
+            num_embeddings=num_channels,
+            embedding_dim=channel_embedding_size,
+            _weight=xavier_truncated_normal((num_channels, channel_embedding_size))
+        )
+
+        self.time_embedding = time_embedding
+        self.time_embedding_dim = self.time_embedding.embedding_dim
+
+        intensity_net_args["channel_embedding"] = self.channel_embeddings
+        self.intensity_net = IntensityNet(**intensity_net_args)
+
+        self.recurrent_cell =  nn.GRUCell(
+            input_size = latent_size + channel_embedding_size + self.time_embedding_dim,
+            hidden_size = hidden_size,
+        )
+
 
 class PPDecoder(nn.Module):
 
