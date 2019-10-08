@@ -15,7 +15,7 @@ NORMS = (
 
 class PPModel(nn.Module):
 
-    def __init__(self, decoder, time_embedding=None, encoder=None, aggregator=None):
+    def __init__(self, decoder, encoder=None, aggregator=None):
         """Constructor for general PPModel class.
         
         Arguments:
@@ -32,11 +32,6 @@ class PPModel(nn.Module):
         self.encoder = encoder
         self.aggregator = aggregator
         self.has_encoder = (encoder is not None) and (aggregator is not None)
-
-        if time_embedding:
-            self.decoder.set_time_embedding(time_embedding)
-            if self.encoder:
-                self.encoder.set_time_embedding(time_embedding)
     
     def get_states(self, tgt_marks, tgt_timestamps, latent_state):
         """Get the hidden states that can be used to extract intensity values from.
