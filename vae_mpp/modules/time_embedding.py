@@ -31,6 +31,7 @@ class SinusoidalEmbedding(nn.Module):
         return torch.cat((sin_emb, cos_emb), dim=-1)
 
 class ExponentialEmbedding(SinusoidalEmbedding):
+    """Exponential decay based embedding."""
 
     def __init__(self, embedding_dim, learnable=True, random=True):
         super().__init__(
@@ -47,6 +48,7 @@ class ExponentialEmbedding(SinusoidalEmbedding):
             return torch.cat((embedding, embedding), dim=-1)
 
 class SinExpEmbedding(nn.Module):
+    """Houses a SinusoidalEmbedding and/or ExponentialEmbedding, where the results are element-wise multiplied together."""
 
     def __init__(self, embedding_dim, use_sinusoidal=True, use_exponential=False, sin_rand=False, exp_rand=False):
         assert(use_sinusoidal or use_exponential)
@@ -83,6 +85,7 @@ class SinExpEmbedding(nn.Module):
         return sin_embedding * exp_embedding
 
 class TemporalEmbedding(nn.Module):
+    """Top level embedding that allows for sin|exp based embeddings with raw times and/or time deltas."""
 
     def __init__(self, embedding_dim, use_raw_time=True, use_delta_time=False, learnable_delta_weights=True):
         assert(use_raw_time or use_delta_time)
@@ -112,13 +115,19 @@ class TemporalEmbedding(nn.Module):
 
     @staticmethod
     def compute_deltas(t, true_times):
-        padded_true_times =  torch.cat((true_times[..., [0]]*0, true_times), dim=-1)  # Pad true events with zeros
-        size = padded_true_times.shape
-        expanded_true_times = padded_true_times.unsqueeze(-1).expand(*size, t.shape[-1])  # Make tensor to compare all values of t to all values of padded_true_times
-        expanded_true_times = expanded_true_times.permute(*list(range(len(size)-1)), -1, -2)  # Remove from one of the padded dimensions
+        # Pad true events with zeros (if a value in t is smaller than all of true_times, then we have it compared to time=0)
+        padded_true_times =  torch.cat((true_times[..., [0]]*0, true_times), dim=-1)  
 
+        # Format true_times to have all values compared against all values of t
+        size = padded_true_times.shape
+        expanded_true_times = padded_true_times.unsqueeze(-1).expand(*size, t.shape[-1])  
+        expanded_true_times = expanded_true_times.permute(*list(range(len(size)-1)), -1, -2)
+
+        # Find out which true event times happened after which times in t, then mask them out
         mask = expanded_true_times < t.unsqueeze(-1)
         adjusted_expanded_true_times = torch.where(mask, expanded_true_times, -expanded_true_times*float('inf'))
+
+        # Find the largest, unmasked values. These are the closest true event times that happened prior to the times in t.
         past_t, _ = adjusted_expanded_true_times.max(dim=-1)
 
         return t - past_t
