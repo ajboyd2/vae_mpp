@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import xavier_truncated_normal, flatten
+from .utils import xavier_truncated_normal, flatten, find_closest
 
 ACTIVATIONS = {
     'relu': nn.ReLU,
@@ -57,8 +57,10 @@ class PPDecoder(nn.Module):
         num_channels,
         channel_embedding_size,
         time_embedding,
-        intensity_net_args,
+        act_func,
+        num_layers_intensity,
         hidden_size,
+        dropout,
         latent_size=None,
     ):
         super().__init__()
@@ -73,14 +75,51 @@ class PPDecoder(nn.Module):
         self.time_embedding = time_embedding
         self.time_embedding_dim = self.time_embedding.embedding_dim
 
-        intensity_net_args["channel_embedding"] = self.channel_embeddings
-        self.intensity_net = IntensityNet(**intensity_net_args)
-
-        self.recurrent_cell =  nn.GRUCell(
-            input_size = latent_size + channel_embedding_size + self.time_embedding_dim,
-            hidden_size = hidden_size,
+        self.intensity_net = IntensityNet(
+            channel_embedding=self.channel_embeddings,
+            input_size=,
+            hidden_size=hidden_size,
+            num_layers=num_intensity_layers,
+            act_func=act_func,
+            dropout=dropout,
         )
 
+        self.recurrent_input_size = latent_size + channel_embedding_size + self.time_embedding_dim
+        self.recurrent_net =  nn.GRU(
+            input_size=self.recurrent_input_size,
+            hidden_size=hidden_size,
+            num_layers=num_recurrent_layers,
+            bidirectional=False,
+            dropout=dropout,
+            batch_first=False,
+        )
+
+        self.register_parameter(
+            name="init_hidden_state",
+            param=xavier_truncated_normal(num_recurrent_layers, 1, hidden_size, no_average=True)
+        )
+
+    def get_states(self, marks, timestamps, latent_state=None):
+
+        components = []
+        components.append(self.channel_embeddings(marks))
+        components.append(self.time_embedding(timestamps))
+
+        if latent_state:
+            components.append(latent_state.unsqueeze(0).expand(timestamps.shape[0], *latent_state.shape))
+        
+        recurrent_input = torch.cat(components, dim=-1)
+        assert(recurrent_input.shape[-1] == self.recurrent_input_size)
+
+        hidden_states, _ = self.recurrent_net(recurrent_input, self.init_hidden_state)
+
+        return hidden_states
+
+    def get_intensity(self, state_values, state_times, timestamps, latent_state):
+
+        #padded_state_values = torch.cat()
+
+        
 
 class PPDecoder(nn.Module):
 
