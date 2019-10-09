@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .utils import xavier_truncated_normal
+from .utils import xavier_truncated_normal, find_closest
 
 
 class SinusoidalEmbedding(nn.Module):
@@ -115,25 +115,6 @@ class TemporalEmbedding(nn.Module):
         
         self.embedding_dim = embedding_dim
 
-    @staticmethod
-    def compute_deltas(t, true_times):
-        # Pad true events with zeros (if a value in t is smaller than all of true_times, then we have it compared to time=0)
-        padded_true_times =  torch.cat((true_times[..., [0]]*0, true_times), dim=-1)  
-
-        # Format true_times to have all values compared against all values of t
-        size = padded_true_times.shape
-        expanded_true_times = padded_true_times.unsqueeze(-1).expand(*size, t.shape[-1])  
-        expanded_true_times = expanded_true_times.permute(*list(range(len(size)-1)), -1, -2)
-
-        # Find out which true event times happened after which times in t, then mask them out
-        mask = expanded_true_times < t.unsqueeze(-1)
-        adjusted_expanded_true_times = torch.where(mask, expanded_true_times, -expanded_true_times*float('inf'))
-
-        # Find the largest, unmasked values. These are the closest true event times that happened prior to the times in t.
-        past_t, _ = adjusted_expanded_true_times.max(dim=-1)
-
-        return t - past_t
-
     def forward(self, t, true_times=None):
         # true_times are the timestamps of events that have actually happened
         # this is necessary as we sometimes sample for times that don't actually happen
@@ -145,7 +126,8 @@ class TemporalEmbedding(nn.Module):
             embeddings.append(self.raw_time_embed(t.unsqueeze(-1)))
 
         if self.delta_time_embed:
-            delta_t = TemporalEmbedding.compute_deltas(t, true_times)
+            closest_dict = find_closest(sample_times=t, true_times=true_times)
+            delta_t = t - closest_dict["closest_values"]
             embeddings.append(self.delta_time_embed(delta_t.unsqueeze(-1)))
 
         return torch.cat(embeddings, dim=-1)
