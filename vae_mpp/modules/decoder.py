@@ -2,14 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import xavier_truncated_normal, flatten, find_closest
+from .utils import xavier_truncated_normal, flatten, find_closest, ACTIVATIONS
 
-ACTIVATIONS = {
-    'relu': nn.ReLU,
-    'sigmoid': nn.Sigmoid,
-    'tanh': nn.Tanh,
-    'identity': lambda x: (lambda y: y)(x)
-}
 
 class IntensityNet(nn.Module):
 
@@ -57,8 +51,7 @@ class PPDecoder(nn.Module):
 
     def __init__(
         self,
-        num_channels,
-        channel_embedding_size,
+        channel_embedding,
         time_embedding,
         act_func,
         num_intensity_layers,
@@ -70,18 +63,18 @@ class PPDecoder(nn.Module):
     ):
         super().__init__()
 
-        self.num_channels = num_channels
-        self.channel_embeddings = nn.Embedding(
-            num_embeddings=num_channels,
-            embedding_dim=channel_embedding_size,
-            _weight=xavier_truncated_normal((num_channels, channel_embedding_size))
-        )
-
+        self.channel_embedding = channel_embedding
         self.time_embedding = time_embedding
-        self.time_embedding_dim = self.time_embedding.embedding_dim
+        self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding._weight.shape[-1], self.time_embedding.embedding_dim
+        
+        #nn.Embedding(
+        #    num_embeddings=num_channels,
+        #    embedding_dim=channel_embedding_size,
+        #    _weight=xavier_truncated_normal((num_channels, channel_embedding_size))
+        #)
 
         self.intensity_net = IntensityNet(
-            channel_embedding=self.channel_embeddings,
+            channel_embedding=self.channel_embedding,
             input_size=latent_size + recurrent_hidden_size + self.time_embedding_dim,
             hidden_size=intensity_hidden_size,
             num_layers=num_intensity_layers,
@@ -89,7 +82,7 @@ class PPDecoder(nn.Module):
             dropout=dropout,
         )
 
-        self.recurrent_input_size = latent_size + channel_embedding_size + self.time_embedding_dim
+        self.recurrent_input_size = latent_size + self.channel_embedding_size + self.time_embedding_dim
         self.recurrent_net =  nn.GRU(
             input_size=self.recurrent_input_size,
             hidden_size=recurrent_hidden_size,
@@ -107,7 +100,7 @@ class PPDecoder(nn.Module):
     def get_states(self, marks, timestamps, latent_state=None):
 
         components = []
-        components.append(self.channel_embeddings(marks))
+        components.append(self.channel_embedding(marks))
         components.append(self.time_embedding(timestamps))
 
         if latent_state:
