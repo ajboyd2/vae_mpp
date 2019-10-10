@@ -1,5 +1,14 @@
 import torch
 
+
+ACTIVATIONS = {
+    'relu': nn.ReLU,
+    'sigmoid': nn.Sigmoid,
+    'tanh': nn.Tanh,
+    'log': torch.log,
+    'identity': lambda x: (lambda y: y)(x)
+}
+
 def truncated_normal(size, scale=1, limit=2):
     return torch.fmod(torch.randn(size),limit) * scale
 
