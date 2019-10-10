@@ -6,6 +6,7 @@ from .utils import xavier_truncated_normal, flatten, find_closest, ACTIVATIONS
 
 
 class IntensityNet(nn.Module):
+    """Module that transforms a set of timestamps, hidden states, and latent vector into intensity values for different channels."""
 
     def __init__(
         self,
@@ -48,6 +49,7 @@ class IntensityNet(nn.Module):
         }
 
 class PPDecoder(nn.Module):
+    """Decoder module that transforms a set of marks, timestamps, and latent vector into intensity values for different channels."""
 
     def __init__(
         self,
@@ -98,6 +100,18 @@ class PPDecoder(nn.Module):
         )
 
     def get_states(self, marks, timestamps, latent_state=None):
+        """Produce the set of hidden states from a given set of marks, timestamps, and latent vector that can then be used to calculate intensities.
+        
+        Arguments:
+            marks {torch.LongTensor} -- Tensor containing mark ids that correspond to channel embeddings.
+            timestamps {torch.FloatTensor} -- Tensor containing times of events that correspond to the marks.
+
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            torch.FloatTensor -- Corresponding hidden states that represent the history of the point process.
+        """
 
         components = []
         components.append(self.channel_embedding(marks))
@@ -113,14 +127,27 @@ class PPDecoder(nn.Module):
 
         return hidden_states
 
-    def get_intensity(self, state_values, state_times, timestamps, latent_state):
+    def get_intensity(self, state_values, state_times, timestamps, latent_state=None):
+        """Gennerate intensity values for a point process.
+        
+        Arguments:
+            state_values {torch.FloatTensor} -- Output hidden states from `get_states` call.
+            state_times {torch.FloatTensor} -- Corresponding timestamps used to generate state_values. These are the "true event times" to be compared against.
+            timestamps {torch.FloatTensor} -- Times to generate intensity values for.
+        
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            [type] -- [description]
+        """
 
         closest_dict = find_closest(sample_times=timestamps, true_times=state_times)
         padded_state_values = torch.cat((self.init_hidden_state[[-1], :, :].expand(state_values.shape[0], -1, -1), state_values), dim=1)  # To match dimensions from when closest values were found
 
         selected_hidden_states = padded_state_values.gather(dim=1, index=closest_dict["closest_indices"].unsqueeze(-1).expand(-1, -1, padded_state_values.shape[-1]))
 
-        time_embedding = self.time_embedding(timestamps)
+        time_embedding = self.time_embedding(timestamps, state_times)
 
         components = [time_embedding, selected_hidden_states]
         if latent_state is not None:

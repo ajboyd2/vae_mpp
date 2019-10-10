@@ -5,6 +5,10 @@ import numpy as np
 from .utils import xavier_truncated_normal, ACTIVATIONS
 
 class PPEncoder(nn.Module):
+    """Encoder module that transforms a sequence of referential marks and times to a set of hidden states.
+    Couple with an PPAdapter to transform output into a latent vector for the PPDecoder.
+    
+    """
 
     def __init__(
         self, 

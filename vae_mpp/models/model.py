@@ -150,7 +150,7 @@ class PPModel(nn.Module):
             sample_intensities = self.get_intensity(
                 state_values=intensity_state_dict["state_values"],
                 state_times=intensity_state_dict["state_times"],
-                timestamps=latent_state,
+                timestamps=sample_timestamps,
                 latent_state=latent_state,
                 marks=None,
             )

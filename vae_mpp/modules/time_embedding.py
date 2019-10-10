@@ -31,7 +31,11 @@ class SinusoidalEmbedding(nn.Module):
         return torch.cat((sin_emb, cos_emb), dim=-1)
 
 class ExponentialEmbedding(SinusoidalEmbedding):
-    """Exponential decay based embedding."""
+    """Exponential decay based embedding.
+    
+    Attributes:
+        weight {torch.tensor} -- Weight tensor to multiply with incoming times
+    """
 
     def __init__(self, embedding_dim, learnable=True, random=True):
         super().__init__(
@@ -48,7 +52,12 @@ class ExponentialEmbedding(SinusoidalEmbedding):
             return torch.cat((embedding, embedding), dim=-1)
 
 class SinExpEmbedding(nn.Module):
-    """Houses a SinusoidalEmbedding and/or ExponentialEmbedding, where the results are element-wise multiplied together."""
+    """Houses a SinusoidalEmbedding and/or ExponentialEmbedding, where the results are element-wise multiplied together.
+    
+    Attributes:
+        sin_embed {SinusoidalEmbedding} -- An optional module containing sinusoidal embeddings
+        exp_embed {ExponentialEmbedding} -- An optional module containing exponential embeddings
+    """
 
     def __init__(self, embedding_dim, use_sinusoidal=True, use_exponential=False, sin_rand=False, exp_rand=False):
         assert(use_sinusoidal or use_exponential)
@@ -85,7 +94,13 @@ class SinExpEmbedding(nn.Module):
         return sin_embedding * exp_embedding
 
 class TemporalEmbedding(nn.Module):
-    """Top level embedding that allows for sin|exp based embeddings with raw times and/or time deltas."""
+    """Top level embedding that allows for sin|exp based embeddings with raw times and/or time deltas.
+    
+    Attributes:
+        raw_time_embed {SinExpEmbedding} -- Embedding module that embeds raw timestamps
+        delta_time_embed {SinExpEmbedding} -- Embedding module that embeds timestamps based on the difference between them and the nearest true event times
+        embedding_dim {int} -- Size of the output embedding dimension
+    """
 
     def __init__(self, embedding_dim, use_raw_time=True, use_delta_time=False, learnable_delta_weights=True):
         assert(use_raw_time or use_delta_time)
