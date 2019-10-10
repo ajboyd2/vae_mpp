@@ -34,16 +34,7 @@ class PPModel(nn.Module):
         self.has_encoder = (encoder is not None) and (aggregator is not None)
     
     def get_states(self, tgt_marks, tgt_timestamps, latent_state):
-        """Get the hidden states that can be used to extract intensity values from.
-        
-        Arguments:
-            tgt_marks {[type]} -- [description]
-            tgt_timestamps {[type]} -- [description]
-            latent_state {[type]} -- [description]
-
-        Returns:
-            dict -- [description]
-        """
+        """Get the hidden states that can be used to extract intensity values from."""
         
         states = self.decoder.get_states(
             marks=tgt_marks, 
@@ -58,17 +49,7 @@ class PPModel(nn.Module):
 
     def get_intensity(self, state_values, state_times, timestamps, latent_state, marks=None):
         """Given a set of hidden states, timestamps, and latent_state get a tensor representing intensity values at timestamps.
-        Specify marks to get intensity values for specific channels.
-        
-        Arguments:
-            states {[type]} -- [description]
-            marks {[type]} -- [description]
-            timestamps {[type]} -- [description]
-            latent_state {[type]} -- [description]
-        
-        Returns:
-            [type] -- [description]
-        """
+        Specify marks to get intensity values for specific channels."""
 
         intensity_dict = self.decoder.get_intensity(
             state_values=state_values,
@@ -83,15 +64,7 @@ class PPModel(nn.Module):
         return intensity_dict 
         
     def get_latent(self, ref_marks, ref_timestamps):
-        """Computes latent variable for a given set of reference marks and timestamped events.
-        
-        Arguments:
-            ref_marks {[type]} -- [description]
-            ref_timestamps {[type]} -- [description]
-        
-        Returns:
-            [type] -- [description]
-        """
+        """Computes latent variable for a given set of reference marks and timestamped events."""
         hidden_states = self.encoder(
             marks=ref_marks,
             timestamps=ref_timestamps,
@@ -99,22 +72,22 @@ class PPModel(nn.Module):
 
         return self.aggregator(hidden_states)
 
-    def forward(self, ref_marks, ref_timestamps, tgt_timestamps, tgt_marks=None, sample_timestamps=None):
+    def forward(self, ref_marks, ref_timestamps, tgt_timestamps, tgt_marks, sample_timestamps=None):
         """Encodes a(n optional) set of marks and timestamps into a latent vector, 
         then decodes corresponding intensity values for a target set of timestamps and marks 
         (as well as a sample set if specified).
         
         Arguments:
-            ref_marks {[type]} -- [description]
-            ref_timestamps {[type]} -- [description]
-            tgt_timestamps {[type]} -- [description]
-        
+            ref_marks {torch.LongTensor} -- Tensor containing mark ids that correspond to channel embeddings. Part of the reference set to be encoded.
+            ref_timestamps {torch.FloatTensor} -- Tensor containing times that correspond to the events in `ref_marks`. Part of the reference set to be encoded.
+            tgt_timestamps {torch.FloatTensor} -- Tensor containing times that correspond to the events in `tgt_marks`. These times will be decoded and are assumed to have happened.
+            tgt_marks {torch.FloatTensor} -- Tensor containing mark ids that correspond to channel embeddings. These events will be decoded and are assumed to have happened.
+
         Keyword Arguments:
-            tgt_marks {[type]} -- [description] (default: {None})
-            sample_timestamps {[type]} -- [description] (default: {None})
+            sample_timestamps {torch.FloatTensor} -- Times that will have intensity values generated for. These events are _not_ assumed to have happened. (default: {None})
         
         Returns:
-            [type] -- [description]
+            dict -- Dictionary containing the produced latent vector, intermediate hidden states, and intensity values for target sequence and sample points.
         """
         return_dict = {}
 
@@ -190,7 +163,7 @@ class PPModel(nn.Module):
         The second dictionary in the return value contains parameters that will not be subject to weight decay.
         
         Returns:
-            (param_group, param_groupS) -- [description]
+            (param_group, param_groups) -- Tuple containing sets of parameters, one of which has weight decay enabled, one of which has it disabled.
         """
 
         weight_decay_params = {'params': []}
