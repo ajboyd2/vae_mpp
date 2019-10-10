@@ -2,87 +2,59 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-_activations = {
-    'relu': nn.ReLU,
-    'sigmoid': nn.Sigmoid,
-    'tanh': nn.Tanh,
-    'log': torch.log,
-    'identity': lambda x: (lambda y: y)(x)
-}
-
+from .utils import xavier_truncated_normal, ACTIVATIONS
 
 class PPEncoder(nn.Module):
 
-    def __init__(self,
-                 event_embedding_dim,
-                 time_embedding_dim,
-                 latent_size,
-                 bidirectional,
-                 rnn_layers,
-                 aggregation_style,
-                 var_act='identity',
-                 dropout=0.0
+    def __init__(
+        self, 
+        channel_embedding,
+        time_embedding,
+        hidden_size,
+        bidirectional,
+        num_recurrent_layers,
+        dropout,
     ):
-        super(PPEncoder, self).__init__()
+        self.channel_embedding = channel_embedding
+        self.time_embedding = time_embedding
+        self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding._weight.shape[-1], self.time_embedding.embedding_dim
 
-        self.latent_size = latent_size
-        self.hidden_size = latent_size * (1 if bidirectional else 2)
+        recurrent_net_args = {
+            "input_size": self.channel_embedding_size + self.time_embedding_dim,
+            "hidden_size": hidden_size,
+            "num_layers": num_recurrent_layers,
+            "batch_first": True,
+            "bidirectional": False,  # Need to keep separate networks if bidir=True due to potential padding issues
+            "dropout": dropout,
+        }
+        self.forward_recurrent_net = nn.GRU(**recurrent_net_args)
+        self.register_parameter(
+            name="forward_init_hidden_state",
+            param=xavier_truncated_normal(size=(num_recurrent_layers, 1, hidden_size), no_average=True)
+        )
 
-        self.rnn = nn.GRU(
-            input_size=event_embedding_dim + time_embedding_dim,
-            hidden_size=self.hidden_size,
-            bidirectional=bidirectional,
-            bias=True,
-            batch_first=False,
-            num_layers=rnn_layers,
-            dropout=dropout)
-
-        if aggregation_style == "concatenation":
-            self.aggregation = self._concatenation
-        elif aggregation_style == "mean":
-            self.aggregation = self._mean
-        elif aggregation_style == "max":
-            self.aggregation = self._max
-        elif aggregation_style == "attention":
-            raise NotImplementedError
+        self.bidirectional = bidirectional
+        if bidirectional:
+            self.backward_recurrent_net = nn.GRU(**recurrent_net_args)
+            self.register_parameter(
+                name="backward_init_hidden_state",
+                param=xavier_truncated_normal(size=(num_recurrent_layers, 1, hidden_size), no_average=True)
+            )
         else:
-            raise LookupError("aggregation_style '{}' not supported.".format(aggregation_style))
+            self.backward_recurrent_net = None
 
-        self.var_act = _activations[var_act]
+    def forward(self, forward_marks, forward_timestamps, backward_marks=None, backward_timestamps=None):
+        steps = [(forward_marks, forward_timestamps, self.forward_recurrent_net, self.forward_init_hidden_state)]
+        if self.bidirectional:
+            assert(backward_marks is not None and backward_timestamps is not None)
+            steps.append((backward_marks, backward_timestamps, self.backward_recurrent_net, self.backward_init_hidden_state))
+        
+        hidden_states = []
+        for marks, timestamps, recurrent_net, init_hidden_state in steps:
+            mark_embedding = self.channel_embedding(marks)
+            time_embedding = self.time_embedding(timestamps)
+            recurrent_input = torch.cat((mark_embedding, time_embedding), dim=-1)
 
-    def _concatenation(self, output, mask=None):
-        if mask is None:
-            return torch.cat((output[-1, :, :self.hidden_size], output[0, :, self.hidden_size:]), dim=-1)
-        raise NotImplementedError
+            hidden_states = recurrent_net(recurrent_input)[0]  # output is a tuple, first element are all hidden states for last layer second is last hidden state for all layers
 
-
-    def _mean(self, output, mask=None):
-        if mask is None:
-            return torch.mean(output, dim=0)
-
-        return torch.where(
-            mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
-            output,
-            torch.zeros_like(output)
-        ).sum(dim=0) / mask.sum(dim=0).float()
-
-    def _max(self, output, mask=None):
-        if mask is None:
-            return torch.max(output, dim=0)[0]
-
-        return torch.where(
-            mask.unsqueeze(-1).expand(-1, -1, output.shape[-1]),
-            output,
-            torch.ones_like(output) * (-np.inf)
-        ).max(dim=0)[0]
-
-    def _attention(selfs, output, mask=None):
-        raise NotImplemented
-
-    def forward(self, time_embed, mark_embed, mask=None):
-        # batch.shape = (sequence_length, batch_size, mark_embedding_dim+time_embedding_dim)
-        batch = torch.cat((time_embed, mark_embed), dim=-1)
-        output, _ = self.rnn(batch)
-        pooled_output = self.aggregation(output, mask)
-        mu, sigma = pooled_output[:, ::2], self.var_act(pooled_output[:, 1::2])
-        return mu, sigma
+        return torch.cat(hidden_states, dim=-1)
