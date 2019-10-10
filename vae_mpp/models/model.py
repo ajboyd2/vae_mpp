@@ -70,7 +70,7 @@ class PPModel(nn.Module):
             [type] -- [description]
         """
 
-        intensities = self.decoder.get_intensity(
+        intensity_dict = self.decoder.get_intensity(
             state_values=state_values,
             state_times=state_times,
             timestamps=timestamps,
@@ -78,9 +78,9 @@ class PPModel(nn.Module):
         )
 
         if marks:
-            return intensities.gather(dim=-1, index=marks.unsqueeze(-1))
-        else:
-            return intensities 
+            intensity_dict["log_mark_intensity"] = intensity_dict["log_mark_prob"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1) + intensity_dict["log_intensity"]
+        
+        return intensity_dict 
         
     def get_latent(self, ref_marks, ref_timestamps):
         """Computes latent variable for a given set of reference marks and timestamped events.
@@ -157,6 +157,32 @@ class PPModel(nn.Module):
             return_dict["sample_intensities"] = sample_intensities
         
         return return_dict
+
+    @staticmethod
+    def log_likelihood(return_dict, right_window, left_window=0.0):
+        """Computes per-batch log-likelihood from the results of a forward pass (that included a set of sample points). 
+        
+        Arguments:
+            return_dict {dict} -- Output from a forward call where `tgt_marks` and `sample_timestamps` were not None
+            right_window {float} -- Upper-most value that was considered when the sampled points were generated
+
+        Keyword Arguments:
+            left_window {float} -- Lower-most value that was considered when the sampled points were generated (default: {0})
+        """
+
+        assert("tgt_intensities" in return_dict and "log_mark_intensity" in return_dict["tgt_intensities"])
+        assert("sample_intensities" in return_dict)
+
+        # num_samples = return_dict["sample_intensities"]["log_intensity"].shape[1]
+        positive_samples = return_dict["tgt_intensities"]["log_mark_intensity"].sum(dim=-1)
+        negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["log_intensity"].exp().mean(dim=-1)  # Summing and divided by number of samples
+
+        return {
+            "log_likelihood": positive_samples - negative_samples,
+            "positive_contribution": positive_samples,
+            "negative_contribution": negative_samples,
+        }
+
             
     def get_param_groups(self):
         """Returns iterable of dictionaries specifying parameter groups.
