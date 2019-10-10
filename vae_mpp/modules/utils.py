@@ -1,5 +1,5 @@
 import torch
-
+from torch import nn
 
 ACTIVATIONS = {
     'relu': nn.ReLU,
