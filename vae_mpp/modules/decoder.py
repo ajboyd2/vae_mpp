@@ -42,12 +42,15 @@ class IntensityNet(nn.Module):
         assert(x.shape[-1] == self.input_size)
 
         pre_out = self.preprocessing_net(x)
-        mark_logits = F.linear(self.mark_net(pre_out), self.channel_embedding._weight)  # No bias by default
-        intensity_logit = self.intensity_net(pre_out)
+
+        log_mark_probs = F.linear(self.mark_net(pre_out), self.channel_embedding._weight)  # No bias by default
+        log_mark_probs = F.log_softmax(log_mark_probs, dim=-1)
+        
+        log_intensity = self.intensity_net(pre_out)
 
         return {
-            "mark_logits": mark_logits,
-            "intensity_logit": intensity_logit,
+            "log_mark_probs": log_mark_probs,
+            "log_intensity": log_intensity,
         }
 
 class PPDecoder(nn.Module):
