@@ -1,4 +1,5 @@
 import torch
+import math
 from torch import nn
 
 ACTIVATIONS = {
@@ -6,7 +7,8 @@ ACTIVATIONS = {
     'sigmoid': nn.Sigmoid,
     'tanh': nn.Tanh,
     'log': torch.log,
-    'identity': lambda x: (lambda y: y)(x)
+    'identity': lambda x: (lambda y: y)(x),
+    'gelu': lambda x: 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
 }
 
 def truncated_normal(size, scale=1, limit=2):
