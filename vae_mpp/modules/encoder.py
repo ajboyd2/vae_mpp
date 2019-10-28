@@ -4,6 +4,7 @@ import numpy as np
 
 from .utils import xavier_truncated_normal, ACTIVATIONS
 
+
 class PPEncoder(nn.Module):
     """Encoder module that transforms a sequence of referential marks and times to a set of hidden states.
     Couple with an PPAdapter to transform output into a latent vector for the PPDecoder.
@@ -19,6 +20,8 @@ class PPEncoder(nn.Module):
         num_recurrent_layers,
         dropout,
     ):
+        super().__init__()
+
         self.channel_embedding = channel_embedding
         self.time_embedding = time_embedding
         self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding._weight.shape[-1], self.time_embedding.embedding_dim
