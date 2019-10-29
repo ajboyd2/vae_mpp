@@ -116,7 +116,7 @@ class InhomogenousPoissonProcess(PointProcess):
         self.mu = rand.rand(K) * right_limit
         self.sigma = 3 + rand.rand(K) * 10
 
-    def intensity(self, t, batch):
+    def intensity(self, t, batch=None):
         sigma = self.sigma
         mu = self.mu
         scale = self.scale
