@@ -47,24 +47,23 @@ def set_random_seed(args):
 
 def setup_model_and_optim(args, epoch_len):
     model = get_model(
-        time_embedding_size, 
-        use_raw_time, 
-        use_delta_time, 
-        embedding_dim, 
-        channel_embedding_size,
-        num_channels,
-        enc_hidden_size,
-        enc_bidirectional, 
-        enc_num_recurrent_layers,
-        agg_method,
-        agg_noise,
-        use_encoder,
-        dec_recurrent_hidden_size,
-        dec_num_recurrent_layers,
-        dec_intensity_hidden_size,
-        dec_num_intensity_layers,
-        dec_act_func="gelu",
-        dropout=0.2,
+        time_embedding_size=args.time_embedding_size, 
+        use_raw_time=args.use_raw_time, 
+        use_delta_time=args.use_delta_time, 
+        channel_embedding_size=args.channel_embedding_size,
+        num_channels=args.num_channels,
+        enc_hidden_size=args.enc_hidden_size,
+        enc_bidirectional=args.enc_bidirectional, 
+        enc_num_recurrent_layers=args.enc_num_recurrent_layers,
+        agg_method=args.agg_method,
+        agg_noise=args.agg_noise,
+        use_encoder=args.use_encoder,
+        dec_recurrent_hidden_size=args.dec_recurrent_hidden_size,
+        dec_num_recurrent_layers=args.dec_num_recurrent_layers,
+        dec_intensity_hidden_size=args.dec_intensity_hidden_size,
+        dec_num_intensity_layers=args.dec_num_intensity_layers,
+        dec_act_func=args.dec_act_func,
+        dropout=args.dropout,
     )
 
     if args.cuda:
@@ -96,8 +95,8 @@ def main():
         
         valid_epoch(args, model)
 
-
-
+if __name__ == "__main__":
+    main()
 
 def _train(args):
     '''Training function'''

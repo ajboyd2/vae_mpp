@@ -7,7 +7,6 @@ def get_model(
     time_embedding_size, 
     use_raw_time, 
     use_delta_time, 
-    embedding_dim, 
     channel_embedding_size,
     num_channels,
     enc_hidden_size,
