@@ -16,11 +16,88 @@ from tqdm import tqdm
 import yaml
 
 from vae_mpp.data import PointPatternDataset, pad_and_combine_instances
-from vae_mpp.models import Model
-from vae_mpp.optim import Optimizer, LRScheduler
+from vae_mpp.models import get_model
+from vae_mpp.optim import get_optimizer, get_lr_scheduler
+from vae_mpp.arguments import get_args
 
 
-logger = logging.getLogger(__name__)
+def forward_pass(args):
+    pass
+
+def backward_pass(args):
+    pass
+
+def train_step(args):
+    pass
+
+def train_epoch(args):
+    pass
+
+def eval_step(args):
+    pass
+
+def eval_epoch(args):
+    pass
+
+def print_results(args):
+    pass
+
+def set_random_seed(args):
+    pass
+
+def setup_model_and_optim(args, epoch_len):
+    model = get_model(
+        time_embedding_size, 
+        use_raw_time, 
+        use_delta_time, 
+        embedding_dim, 
+        channel_embedding_size,
+        num_channels,
+        enc_hidden_size,
+        enc_bidirectional, 
+        enc_num_recurrent_layers,
+        agg_method,
+        agg_noise,
+        use_encoder,
+        dec_recurrent_hidden_size,
+        dec_num_recurrent_layers,
+        dec_intensity_hidden_size,
+        dec_num_intensity_layers,
+        dec_act_func="gelu",
+        dropout=0.2,
+    )
+
+    if args.cuda:
+        model.cuda(torch.cuda.current_device())
+
+    optimizer = get_optimizer(model, args)
+    lr_scheduler = get_lr_scheduler(optimizer, args, epoch_len)
+
+    return model, optimizer, lr_scheduler
+
+def get_data(args):
+    pass
+
+def save_checkpoint(args, model, optimizer, lr_scheduler):
+    pass
+
+def main():
+    args = get_args()
+    
+    train_dataloader, valid_dataloader = get_data(args)
+
+    model, optimizer, lr_scheduler = setup_model_and_optim(args, len(train_dataloader))
+
+    for epoch in range(args.train_epochs):
+        train_epoch(args, model, optimizer, lr_scheduler)
+
+        if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
+            save_checkpoint(args, model, optimizer, lr_scheduler)
+        
+        valid_epoch(args, model)
+
+
+
 
 def _train(args):
     '''Training function'''

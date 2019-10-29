@@ -16,11 +16,9 @@ def model_config_args(parser):
 def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
     group.add_argument("--checkpoint_path", default="./", help="")
-    group.add_argument("--train_iters", default=10000, help="Number of batches to iterate over for training.")
+    group.add_argument("--train_epochs", default=40, help="Number of epochs to iterate over for training.")
     group.add_argument("--batch_size", default=32, help="Number of samples per batch.")
-    group.add_argument("--valid_iters", default=500, help="Number of batches to iterate over each validation period.")
-    group.add_argument("--valid_interval", default=1000, help="Number of training batches to complete before starting a validation period")
-    group.add_argument("--save_interval", default=2000, help="Number of training batches to complete before saving a model checkpoint.")
+    group.add_argument("--save_epochs", default=1, help="Number of training epochs to complete between model checkpoint saves.")
     group.add_argument("--optimizer", default="adam", help="Type of optimization algorithm to use.")
     group.add_argument("--lr", default=0.0003, help="Learning rate.")
     group.add_argument("--weight_decay", default=0.01, help="L2 coefficient for weight decay.")

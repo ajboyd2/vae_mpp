@@ -84,9 +84,9 @@ def get_optimizer(model, args):
 
     return optimizer
     
-def get_lr_scheduler(optimizer, args):
+def get_lr_scheduler(optimizer, args, epoch_len):
     
-    total_iterations = args["train_iters"]
+    total_iterations = args["train_epochs"] * epoch_len  #  args["train_iters"]
     warmup_iterations = math.floor(args["warmup_pct"] * total_iterations)
 
     lr_scheduler = LRScheduler(
