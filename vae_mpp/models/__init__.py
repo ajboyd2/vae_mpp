@@ -3,7 +3,7 @@ import torch
 from vae_mpp.modules import PPDecoder, PPEncoder,PPAggregator, TemporalEmbedding
 from vae_mpp.models.model import PPModel
 
-def make_model(
+def get_model(
     time_embedding_size, 
     use_raw_time, 
     use_delta_time, 
