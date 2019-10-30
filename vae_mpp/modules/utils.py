@@ -2,13 +2,38 @@ import torch
 import math
 from torch import nn
 
+
+class Log(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return torch.log(x)
+
+class Identity(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+
+class GELU(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+
 ACTIVATIONS = {
     'relu': nn.ReLU,
     'sigmoid': nn.Sigmoid,
     'tanh': nn.Tanh,
-    'log': torch.log,
-    'identity': lambda x: (lambda y: y)(x),
-    'gelu': lambda x: 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    'log': Log, 
+    'identity': Identity,
+    'gelu': GELU,
 }
 
 def truncated_normal(size, scale=1, limit=2):
@@ -28,6 +53,9 @@ def truncated_normal(size, scale=1, limit=2):
 
 def xavier_truncated_normal(size, limit=2, no_average=False):
     """Samples from a truncated normal where the standard deviation is automatically chosen based on size."""
+    if isinstance(size, int):
+        size = (size,)
+    
     if len(size) == 1 or no_average:
         n_avg = size[-1]
     else:
