@@ -63,16 +63,16 @@ class PPModel(nn.Module):
         
         return intensity_dict 
         
-    def get_latent(self, ref_marks, ref_timestamps):
+    def get_latent(self, ref_marks, ref_timestamps, context_lengths):
         """Computes latent variable for a given set of reference marks and timestamped events."""
         hidden_states = self.encoder(
             marks=ref_marks,
             timestamps=ref_timestamps,
         )
 
-        return self.aggregator(hidden_states)
+        return self.aggregator(hidden_states, context_lengths)
 
-    def forward(self, ref_marks, ref_timestamps, tgt_timestamps, tgt_marks, sample_timestamps=None):
+    def forward(self, ref_marks, ref_timestamps, tgt_marks, tgt_timestamps, context_lengths, sample_timestamps=None):
         """Encodes a(n optional) set of marks and timestamps into a latent vector, 
         then decodes corresponding intensity values for a target set of timestamps and marks 
         (as well as a sample set if specified).
@@ -80,8 +80,9 @@ class PPModel(nn.Module):
         Arguments:
             ref_marks {torch.LongTensor} -- Tensor containing mark ids that correspond to channel embeddings. Part of the reference set to be encoded.
             ref_timestamps {torch.FloatTensor} -- Tensor containing times that correspond to the events in `ref_marks`. Part of the reference set to be encoded.
-            tgt_timestamps {torch.FloatTensor} -- Tensor containing times that correspond to the events in `tgt_marks`. These times will be decoded and are assumed to have happened.
             tgt_marks {torch.FloatTensor} -- Tensor containing mark ids that correspond to channel embeddings. These events will be decoded and are assumed to have happened.
+            tgt_timestamps {torch.FloatTensor} -- Tensor containing times that correspond to the events in `tgt_marks`. These times will be decoded and are assumed to have happened.
+            context_lengths {torch.LongTensor} -- Tensor containing position ids that correspond to last events in the reference material.
 
         Keyword Arguments:
             sample_timestamps {torch.FloatTensor} -- Times that will have intensity values generated for. These events are _not_ assumed to have happened. (default: {None})
@@ -93,13 +94,19 @@ class PPModel(nn.Module):
 
         # Encoding phase
         if self.has_encoder:
-            latent_state = self.get_latent(
+            latent_state_dict = self.get_latent(
                 ref_marks=ref_marks,
                 ref_timestamps=ref_timestamps,
+                context_lengths=context_lengths,
             )
         else:
-            latent_state = None
-        return_dict["latent_state"] = latent_state
+            latent_state_dict = {
+                "latent_state": None,
+                "mu": None,
+                "log_sigma": None,
+            }
+        return_dict["latent_state_dict"] = latent_state_dict
+        latent_state = latent_state_dict["latent_state"]
 
         # Decoding phase
         intensity_state_dict = self.get_states(
@@ -132,7 +139,7 @@ class PPModel(nn.Module):
         return return_dict
 
     @staticmethod
-    def log_likelihood(return_dict, right_window, left_window=0.0):
+    def log_likelihood(return_dict, right_window, left_window=0.0, mask=1):
         """Computes per-batch log-likelihood from the results of a forward pass (that included a set of sample points). 
         
         Arguments:
@@ -141,19 +148,20 @@ class PPModel(nn.Module):
 
         Keyword Arguments:
             left_window {float} -- Lower-most value that was considered when the sampled points were generated (default: {0})
+            mask {FloatTensor} -- Mask to delineate target intensities that correspond to real events and paddings (default: {1}) 
         """
 
         assert("tgt_intensities" in return_dict and "log_mark_intensity" in return_dict["tgt_intensities"])
         assert("sample_intensities" in return_dict)
 
         # num_samples = return_dict["sample_intensities"]["log_intensity"].shape[1]
-        positive_samples = return_dict["tgt_intensities"]["log_mark_intensity"].sum(dim=-1)
+        positive_samples = (return_dict["tgt_intensities"]["log_mark_intensity"] * mask).sum(dim=-1)
         negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["log_intensity"].exp().mean(dim=-1)  # Summing and divided by number of samples
 
         return {
-            "log_likelihood": positive_samples - negative_samples,
-            "positive_contribution": positive_samples,
-            "negative_contribution": negative_samples,
+            "log_likelihood": (positive_samples - negative_samples).mean(),
+            "positive_contribution": positive_samples.mean(),
+            "negative_contribution": negative_samples.mean(),
         }
 
             
