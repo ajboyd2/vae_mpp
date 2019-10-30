@@ -76,25 +76,25 @@ def get_optimizer(model, args):
 
     param_groups = model.get_param_groups()
 
-    optimizer = OPTIMIZERS[args["optimizer"]](
+    optimizer = OPTIMIZERS[args.optimizer](
         param_groups,
-        lr=args["lr"],
-        weight_decay=args["weight_decay"],  # learning rate, weight decay, etc.
+        lr=args.lr,
+        weight_decay=args.weight_decay,  # learning rate, weight decay, etc.
     )
 
     return optimizer
     
 def get_lr_scheduler(optimizer, args, epoch_len):
     
-    total_iterations = args["train_epochs"] * epoch_len  #  args["train_iters"]
-    warmup_iterations = math.floor(args["warmup_pct"] * total_iterations)
+    total_iterations = args.train_epochs * epoch_len  #  args["train_iters"]
+    warmup_iterations = math.floor(args.warmup_pct * total_iterations)
 
     lr_scheduler = LRScheduler(
         optimizer=optimizer,
-        start_lr=args["lr"],
+        start_lr=args.lr,
         warmup_iter=warmup_iterations,
         num_iters=total_iterations,
-        decay_style=args["lr_decay_style"],
+        decay_style=args.lr_decay_style,
     )
 
     return lr_scheduler
