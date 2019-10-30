@@ -31,4 +31,8 @@ class PPAggregator(nn.Module):
         else:
             latent_state = mu
 
-        return latent_state
+        return {
+            "latent_state": latent_state,
+            "mu": mu,
+            "log_sigma": log_sigma,
+        }
