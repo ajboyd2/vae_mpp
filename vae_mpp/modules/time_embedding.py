@@ -21,7 +21,7 @@ class SinusoidalEmbedding(nn.Module):
             weight = torch.exp(torch.arange(0, embedding_dim, 2).float() * (-math.log(10000.0) / embedding_dim))
     
         if learnable:
-            self.register_parameter('weight', weight)
+            self.register_parameter('weight', nn.Parameter(weight))
         else:
             self.register_buffer('weight', weight)
 
@@ -60,6 +60,8 @@ class SinExpEmbedding(nn.Module):
     """
 
     def __init__(self, embedding_dim, use_sinusoidal=True, use_exponential=False, sin_rand=False, exp_rand=False):
+        super().__init__()
+
         assert(use_sinusoidal or use_exponential)
         
         if use_sinusoidal:
@@ -103,6 +105,8 @@ class TemporalEmbedding(nn.Module):
     """
 
     def __init__(self, embedding_dim, use_raw_time=True, use_delta_time=False, learnable_delta_weights=True):
+        super().__init__()
+
         assert(use_raw_time or use_delta_time)
         num_components = 2 if use_raw_time and use_delta_time else 1
 

@@ -24,7 +24,7 @@ class PPEncoder(nn.Module):
 
         self.channel_embedding = channel_embedding
         self.time_embedding = time_embedding
-        self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding._weight.shape[-1], self.time_embedding.embedding_dim
+        self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding.weight.shape[-1], self.time_embedding.embedding_dim
 
         recurrent_net_args = {
             "input_size": self.channel_embedding_size + self.time_embedding_dim,
@@ -37,7 +37,7 @@ class PPEncoder(nn.Module):
         self.forward_recurrent_net = nn.GRU(**recurrent_net_args)
         self.register_parameter(
             name="forward_init_hidden_state",
-            param=xavier_truncated_normal(size=(num_recurrent_layers, 1, hidden_size), no_average=True)
+            param=nn.Parameter(xavier_truncated_normal(size=(num_recurrent_layers, 1, hidden_size), no_average=True))
         )
 
         self.bidirectional = bidirectional
@@ -45,7 +45,7 @@ class PPEncoder(nn.Module):
             self.backward_recurrent_net = nn.GRU(**recurrent_net_args)
             self.register_parameter(
                 name="backward_init_hidden_state",
-                param=xavier_truncated_normal(size=(num_recurrent_layers, 1, hidden_size), no_average=True)
+                param=nn.Parameter(xavier_truncated_normal(size=(num_recurrent_layers, 1, hidden_size), no_average=True))
             )
         else:
             self.backward_recurrent_net = None
@@ -56,12 +56,13 @@ class PPEncoder(nn.Module):
             assert(backward_marks is not None and backward_timestamps is not None)
             steps.append((backward_marks, backward_timestamps, self.backward_recurrent_net, self.backward_init_hidden_state))
         
-        hidden_states = []
+        last_hidden_states = []
         for marks, timestamps, recurrent_net, init_hidden_state in steps:
             mark_embedding = self.channel_embedding(marks)
             time_embedding = self.time_embedding(timestamps)
             recurrent_input = torch.cat((mark_embedding, time_embedding), dim=-1)
 
             hidden_states = recurrent_net(recurrent_input)[0]  # output is a tuple, first element are all hidden states for last layer second is last hidden state for all layers
+            last_hidden_states.append(hidden_states)
 
-        return torch.cat(hidden_states, dim=-1)
+        return torch.cat(last_hidden_states, dim=-1)

@@ -20,7 +20,8 @@ class IntensityNet(nn.Module):
         super().__init__()
 
         self.channel_embedding = channel_embedding
-        channel_embedding_dim = channel_embedding._weight.shape[-1]
+        self.input_size = input_size
+        channel_embedding_dim = channel_embedding.weight.shape[-1]
 
         if isinstance(act_func, str):
             act_func = ACTIVATIONS[act_func]
@@ -38,14 +39,14 @@ class IntensityNet(nn.Module):
 
         pre_out = self.preprocessing_net(x)
 
-        log_mark_probs = F.linear(self.mark_net(pre_out), self.channel_embedding._weight)  # No bias by default
+        log_mark_probs = F.linear(self.mark_net(pre_out), self.channel_embedding.weight)  # No bias by default
         log_mark_probs = F.log_softmax(log_mark_probs, dim=-1)
         
         log_intensity = self.intensity_net(pre_out)
 
         return {
             "log_mark_probs": log_mark_probs,
-            "log_intensity": log_intensity,
+            "log_intensity": log_intensity.squeeze(-1),
         }
 
 class PPDecoder(nn.Module):
@@ -67,7 +68,7 @@ class PPDecoder(nn.Module):
 
         self.channel_embedding = channel_embedding
         self.time_embedding = time_embedding
-        self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding._weight.shape[-1], self.time_embedding.embedding_dim
+        self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding.weight.shape[-1], self.time_embedding.embedding_dim
         
         #nn.Embedding(
         #    num_embeddings=num_channels,
@@ -96,7 +97,7 @@ class PPDecoder(nn.Module):
 
         self.register_parameter(
             name="init_hidden_state",
-            param=xavier_truncated_normal(size=(num_recurrent_layers, 1, recurrent_hidden_size), no_average=True)
+            param=nn.Parameter(xavier_truncated_normal(size=(num_recurrent_layers, 1, recurrent_hidden_size), no_average=True))
         )
 
     def get_states(self, marks, timestamps, latent_state=None):
@@ -117,9 +118,9 @@ class PPDecoder(nn.Module):
         components.append(self.channel_embedding(marks))
         components.append(self.time_embedding(timestamps))
 
-        if latent_state:
-            components.append(latent_state.unsqueeze(0).expand(timestamps.shape[0], *latent_state.shape))
-        
+        if latent_state is not None:
+            components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
+
         recurrent_input = torch.cat(components, dim=-1)
         assert(recurrent_input.shape[-1] == self.recurrent_input_size)
 
@@ -151,7 +152,7 @@ class PPDecoder(nn.Module):
 
         components = [time_embedding, selected_hidden_states]
         if latent_state is not None:
-            components.append(latent_state)
-        
+            components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
+
         intensity_input = torch.cat(components, dim=-1)
         return self.intensity_net(intensity_input)
