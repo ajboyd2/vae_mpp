@@ -8,6 +8,8 @@ def general_args(parser):
     group = parser.add_argument_group("General set arguments for miscelaneous utilities.")
     #group.add_argument("--json_config_path", default=None, help="Path to json file containing arguments to be parsed.")
     group.add_argument("--seed", type=int, default=1234321, help="Seed for all random processes.")
+    group.add_argument("--dont_print_args", action="store_true", help="Specify to disable printing of arguments.")
+    group.add_argument("--cuda", action="store_true", help="Convert model and data to GPU.")
 
 def model_config_args(parser):
     group = parser.add_argument_group("Model configuration arguments.")
@@ -33,7 +35,7 @@ def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
     group.add_argument("--checkpoint_path", type=str, default="./", help="")
     group.add_argument("--train_epochs", type=int, default=40, help="Number of epochs to iterate over for training.")
-    group.add_argument("--train_data_path", type=str, default="./", help="Path to training data file.")
+    group.add_argument("--train_data_path", type=str, default="./data/1_pp/training.pickle", help="Path to training data file.")
     group.add_argument("--num_workers", type=int, default=0, help="Number of parallel workers for data loaders.")
     group.add_argument("--batch_size", type=int, default=32, help="Number of samples per batch.")
     group.add_argument("--log_interval", type=int, default=100, help="Number of batches to complete before printing intermediate results.")
@@ -49,7 +51,7 @@ def training_args(parser):
 
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
-    group.add_argument("--valid_data_path", type=str, default="./", help="Path to training data file.")
+    group.add_argument("--valid_data_path", type=str, default="./data/1_pp/validation.pickle", help="Path to training data file.")
     #group.add_argument("--", type=, default=, help="")
 
 def sampling_args(parser):
@@ -57,11 +59,13 @@ def sampling_args(parser):
     #group.add_argument("--", type=, default=, help="")
 
 def print_args(args):
-    max_arg_len = max(len(k) for k in args.keys())
-    for k, v in args.items():
-        print_log("{}{}{}".format(
+    max_arg_len = max(len(k) for k, v in args.items())
+    key_set = sorted([k for k in args.keys()])
+    for k in key_set:
+        v = args[k]
+        print_log("{} {} {}".format(
             k,
-            max_arg_len + 3 - len(k),
+            "." * (max_arg_len + 3 - len(k)),
             v,
         ))
 
@@ -76,7 +80,7 @@ def get_args():
 
     args = parser.parse_args()
 
-    if args.print_args:
-        print_args(args)
+    if not args.dont_print_args:
+        print_args(vars(args))
 
     return args
