@@ -26,7 +26,7 @@ from vae_mpp.utils import kl_div, mmd_div, print_log
 
 
 def forward_pass(args, batch, model):
-marks, timestamps, context_lengths, padding_mask \
+    marks, timestamps, context_lengths, padding_mask \
         = batch["marks"], batch["timestamps"], batch["context_lengths"], batch["padding_mask"]
 
     T = 50.0  # TODO: Make this adjustable
