@@ -7,7 +7,7 @@ from .utils import print_log
 def general_args(parser):
     group = parser.add_argument_group("General set arguments for miscelaneous utilities.")
     #group.add_argument("--json_config_path", default=None, help="Path to json file containing arguments to be parsed.")
-    #group.add_argument("--", type=, default=, help="")
+    group.add_argument("--seed", type=int, default=1234321, help="Seed for all random processes.")
 
 def model_config_args(parser):
     group = parser.add_argument_group("Model configuration arguments.")
@@ -33,16 +33,23 @@ def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
     group.add_argument("--checkpoint_path", type=str, default="./", help="")
     group.add_argument("--train_epochs", type=int, default=40, help="Number of epochs to iterate over for training.")
+    group.add_argument("--train_data_path", type=str, default="./", help="Path to training data file.")
+    group.add_argument("--num_workers", type=int, default=0, help="Number of parallel workers for data loaders.")
     group.add_argument("--batch_size", type=int, default=32, help="Number of samples per batch.")
+    group.add_argument("--log_interval", type=int, default=100, help="Number of batches to complete before printing intermediate results.")
     group.add_argument("--save_epochs", type=int, default=1, help="Number of training epochs to complete between model checkpoint saves.")
     group.add_argument("--optimizer", type=str, default="adam", help="Type of optimization algorithm to use.")
+    group.add_argument("--grad_clip", type=float, default=1.0, help="Threshold for gradient clipping.")
     group.add_argument("--lr", type=float, default=0.0003, help="Learning rate.")
+    group.add_argument("--loss_alpha", type=float, default=0.2, help="Alpha scaling parameter for loss.")
+    group.add_argument("--loss_lambda", type=float, default=2, help="Lambda scaling parameter for loss.")
     group.add_argument("--weight_decay", type=float, default=0.01, help="L2 coefficient for weight decay.")
     group.add_argument("--warmup_pct", type=float, default=0.01, help="Percentage of 'train_iters' to be spent ramping learning rate up from 0.")
     group.add_argument("--lr_decay_style", type=str, default="cosine", help="Decay style for the learning rate, after the warmup period.")
 
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
+    group.add_argument("--valid_data_path", type=str, default="./", help="Path to training data file.")
     #group.add_argument("--", type=, default=, help="")
 
 def sampling_args(parser):
@@ -71,3 +78,5 @@ def get_args():
 
     if args.print_args:
         print_args(args)
+
+    return args
