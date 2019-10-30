@@ -7,11 +7,14 @@ from pathlib import Path
 import shutil
 import sys
 import argparse
+import random
+from collections import defaultdict
 
-from apex import amp
+#from apex import amp
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from torch.nn.utils import clip_grad_norm_ as clip_grad
 from tqdm import tqdm
 import yaml
 
@@ -19,31 +22,120 @@ from vae_mpp.data import PointPatternDataset, pad_and_combine_instances
 from vae_mpp.models import get_model
 from vae_mpp.optim import get_optimizer, get_lr_scheduler
 from vae_mpp.arguments import get_args
+from vae_mpp.utils import kl_div, mmd_div, print_log
 
 
-def forward_pass(args):
-    pass
+def forward_pass(args, batch, model):
+marks, timestamps, context_lengths, padding_mask \
+        = batch["marks"], batch["timestamps"], batch["context_lengths"], batch["padding_mask"]
 
-def backward_pass(args):
-    pass
+    T = 50.0  # TODO: Make this adjustable
 
-def train_step(args):
-    pass
+    sample_timestamps = torch.rand_like(timestamps) * T  # ~ U(0, T)
 
-def train_epoch(args):
-    pass
+    # Forward Pass
+    results = model(
+        ref_marks=marks, 
+        ref_timestamps=timestamps, 
+        tgt_marks=marks, 
+        tgt_timestamps=timestamps, 
+        context_lengths=context_lengths,
+        sample_timestamps=sample_timestamps
+    )
 
-def eval_step(args):
-    pass
+    # Calculate losses
+    ll_results = model.log_likelihood(
+        return_dict=results, 
+        right_window=T, 
+        left_window=0.0, 
+        mask=padding_mask,
+    )
+    log_likelihood, ll_pos_contrib, ll_neg_contrib = \
+        ll_results["log_likelihood"], ll_results["positive_contribution"], ll_results["negative_contribution"]
 
-def eval_epoch(args):
-    pass
+    if args.use_noise and args.use_encoder:
+        kl_term = kl_div(results["latent_state_dict"]["mu"], 2 * results["latent_state_dict"]["log_sigma"])
+        mmd_term = mmd_div(results["latent_state_dict"]["latent_state"])
+    else:
+        kl_term, mmd_term = 0, 0
 
-def print_results(args):
-    pass
+    loss = (-1 * log_likelihood) + ((1 - args.loss_alpha) * kl_term) + ((args.loss_alpha + args.loss_lambda - 1) * mmd_term)
+
+    return {
+        "loss": loss,
+        "log_likelihood": log_likelihood,
+        "ll_pos": ll_pos_contrib,
+        "ll_neg": ll_neg_contrib,
+        "kl_divergence": kl_term,
+        "mmd_divergence": mmd_term,
+    }
+
+def backward_pass(args, loss, model, optimizer):
+    
+    optimizer.zero_grad()
+
+    # TODO: Support different backwards passes for fp16
+    loss.backward()
+    
+    # TODO: If using data parallel, need to perform a reduce operation
+    # TODO: Update master gradients if using fp16
+
+    clip_grad(parameters=model.parameters(), max_norm=args.grad_clip, norm_type=2)
+
+def train_step(args, model, optimizer, lr_scheduler, batch):
+
+    loss_results = forward_pass(args, batch, model)
+
+    backward_pass(args, loss_results["loss"], model, optimizer)
+
+    optimizer.step()
+
+    lr_scheduler.step()
+
+    return loss_results
+
+def train_epoch(args, model, optimizer, lr_scheduler, data_loader, epoch_number):
+    total_losses = defaultdict(lambda: 0.0)
+    data_len = len(data_loader)
+    for i, batch in enumerate(data_loader):
+        batch_loss = train_step(args, model, optimizer, lr_scheduler, batch)
+        for k, v in batch_loss.items():
+            total_losses[k] += v.item()
+        
+        if (i % args.log_interval == 0) and (i > 0):
+            print_results(args, {k:v/args.log_interval for k,v in total_losses.items()}, epoch_number, iteration, data_len, True)
+            total_losses = defaultdict(lambda: 0.0)
+
+    if i % args.log_interval != 0:
+        print_results(args, {k:v/(i % args.log_interval) for k,v in total_losses.items()}, epoch_number, i, data_len, True)
+
+def eval_step(args, model, batch):
+    return forward_pass(args, batch, model)
+
+def eval_epoch(args, model, optimizer, lr_scheduler, data_loader, epoch_number):
+    total_losses = defaultdict(lambda: 0.0)
+    data_len = len(data_loader)
+    for i, batch in enumerate(data_loader):
+        batch_loss = train_step(args, model, optimizer, lr_scheduler, batch)
+        for k, v in batch_loss.items():
+            total_losses[k] += v.item()
+        
+    print_results(args, {k:v/data_len for k,v in total_losses.items()}, epoch_number, i, data_len, False)
+
+def print_results(args, total_losses, epoch_number, iteration, data_len, training=True):
+    msg = "[{}] Epoch {}/{} | Iter {}/{} | ".format("T" if training else "V", epoch_number, args.train_epochs, i, len(data_loader))
+    msg += "".join("{} {:6E} | ".format(k, v) for k,v in total_losses.items())
+    print_log(msg)
 
 def set_random_seed(args):
-    pass
+    """Set random seed for reproducibility."""
+
+    seed = args.seed
+
+    if seed is not None and seed > 0:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
 def setup_model_and_optim(args, epoch_len):
     model = get_model(
@@ -75,9 +167,33 @@ def setup_model_and_optim(args, epoch_len):
     return model, optimizer, lr_scheduler
 
 def get_data(args):
-    pass
+    train_dataset = PointPatternDataset(file_path=args.train_data_path)
+    valid_dataset = PointPatternDataset(file_path=args.valid_data_path)
+
+    train_dataloader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        collate_fn=pad_and_combine_instances,
+        drop_last=True,
+    )
+
+    valid_dataloader = DataLoader(
+        dataset=valid_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=pad_and_combine_instances,
+        drop_last=True,
+    )
+
+    return train_dataloader, valid_dataloader    
 
 def save_checkpoint(args, model, optimizer, lr_scheduler):
+    pass
+
+def load_checkpoint(args, model):
     pass
 
 def main():
@@ -88,201 +204,12 @@ def main():
     model, optimizer, lr_scheduler = setup_model_and_optim(args, len(train_dataloader))
 
     for epoch in range(args.train_epochs):
-        train_epoch(args, model, optimizer, lr_scheduler)
+        train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch)
 
         if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
             save_checkpoint(args, model, optimizer, lr_scheduler)
         
-        valid_epoch(args, model)
+        valid_epoch(args, model, valid_dataloader, epoch)
 
 if __name__ == "__main__":
     main()
-
-def _train(args):
-    '''Training function'''
-
-    if not args.config.exists():
-        logger.error('Config does not exist. Exiting.')
-        sys.exit(1)
-
-    with open(args.config, 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.SafeLoader)
-
-    if args.output_dir.exists() and not (args.resume or args.force):
-        logger.error('Directory "{}" already exists. Exiting.'.format(args.output_dir))
-        sys.exit(1)
-    else:
-        logger.info('Creating directory "{}"'.format(args.output_dir))
-        if not args.output_dir.exists():
-            args.output_dir.mkdir()
-        shutil.copy(args.config, args.output_dir / 'config.yaml')
-
-    # Set up logging
-    fh = logging.FileHandler(args.output_dir / 'output.log')
-    logging.getLogger().addHandler(fh)
-
-    torch.manual_seed(config.get('seed', 5150))
-    np.random.seed(config.get('seed', 1336) + 1)
-
-    # Initialize model components from config
-    model = Model.from_config(config['model'])
-
-    optimizer = Optimizer.from_config(config['optimizer'], params=model.parameters())
-    if 'lr_scheduler' in config:
-        lr_scheduler = LRScheduler.from_config(config['lr_scheduler'])
-    else:
-        lr_scheduler = None
-
-    if args.cuda:
-        logger.info('Using cuda')
-        if args.cuda_device is not None:
-            model = model.cuda(args.cuda_device)
-        else:
-            model = model.cuda()
-
-        if args.fp16:
-            model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
-
-    # Restore checkpoint
-    checkpoint_path = args.output_dir / 'checkpoint.pt'
-    best_checkpoint_path = args.output_dir / 'model.pt'
-    if (args.output_dir / 'checkpoint.pt').exists() and args.resume:
-        logger.info('Found existing checkpoint. Resuming training.')
-        state_dict = torch.load(checkpoint_path)
-        start_epoch = state_dict['epoch']
-        best_metric = state_dict['best_metric']
-        model.load_state_dict(state_dict['model'])
-        optimizer.load_state_dict(state_dict['optimizer'])
-        if lr_scheduler is not None:
-            lr_scheduler.load_state_dict(state_dict['lr_scheduler'])
-    else:
-        logger.info('No existing checkpoint. Training from scratch.')
-        start_epoch = 0
-        best_metric = float('inf')
-
-    train_config = config['training']
-
-    train_dataset = PointPatternDataset(config['train_data'])
-    validation_dataset = PointPatternDataset(config['validation_data'])
-
-    for epoch in range(start_epoch, train_config['epochs']):
-        logger.info('Epoch: %i', epoch)
-
-        # Training loop
-        logger.info('Training...')
-        model.train()
-        train_loader = DataLoader(train_dataset,
-                                  batch_size=train_config['batch_size'],
-                                  shuffle=True,
-                                  num_workers=train_config.get('num_workers', 0),
-                                  collate_fn=pad_and_combine_instances)
-        train_tqdm = tqdm(train_loader, desc='[T] Loss: NA')
-        train_losses = []
-        optimizer.zero_grad()
-
-        for instance in train_tqdm:
-            if args.cuda:
-                instance = {key: value.cuda(args.cuda_device) for key, value in instance.items()}
-
-            # Process Batch
-            instance["mc_samples"] = train_config.get("train_mc_samples", 100)
-            instance["T"] = train_config.get("train_right_window", None)
-            output_dict = model(**instance)
-            loss = output_dict['loss'].mean()
-
-            # update gradients
-            if args.fp16:
-                with amp.scale_loss(loss,  optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-
-            # Report Losses
-            train_losses.append(loss.item())
-            train_tqdm.set_description('[T] Batch Loss: {:08.4f} - Avg Loss: {:08.4f}'.format(loss.item(), sum(train_losses) / len(train_losses)))
-
-        # Validation loop
-        logger.info('Validating...')
-        model.eval()
-        validation_loader = DataLoader(validation_dataset,
-                                       batch_size=train_config['batch_size'],
-                                       shuffle=False,
-                                       num_workers=train_config.get('num_workers', 0),
-                                       collate_fn=pad_and_combine_instances)
-        validation_tqdm = tqdm(validation_loader, desc='[V] Loss: NA')
-        validation_losses = []
-
-        for instance in validation_tqdm:
-            if args.cuda:
-                instance = {key: value.cuda(args.cuda_device) for key, value in instance.items()}
-
-            with torch.no_grad():
-                # Process Batch
-                instance["mc_samples"] = train_config.get("valid_mc_samples", 500)
-                instance["T"] = train_config.get("valid_right_window", None)
-                output_dict = model(**instance)
-                loss = output_dict['loss'].mean()
-
-                # Report losses
-                validation_losses.append(loss.item())
-                validation_tqdm.set_description('[V] Batch Loss: {:08.4f} - Avg Loss: {:08.4f}'.format(loss.item(), sum(validation_losses) / len(validation_losses)))
-
-        # Report losses for the epoch
-        metric = sum(validation_losses) / len(validation_losses)
-        logger.info('Loss: Train {:08.4f} - Validation {:08.4f}'.format(sum(train_losses) / len(train_losses), metric))
-
-        # Checkpoint
-        model_state_dict = model.state_dict()
-        state_dict = {
-            'model': model_state_dict,
-            'optimizer': optimizer.state_dict(),
-            'epoch': epoch,
-            'best_metric': best_metric
-        }
-        if lr_scheduler:
-            state_dict['lr_scheduler'] = lr_scheduler.state_dict()
-
-        # If model is best encountered overwrite best model checkpoint.
-        if metric < best_metric:
-            logger.info('Best model so far.')
-            state_dict['best_metric'] = metric
-            best_metric = metric
-            torch.save(state_dict, best_checkpoint_path)
-
-        # Save current model.
-        torch.save(state_dict, checkpoint_path)
-
-    if lr_scheduler is not None:
-        lr_scheduler.step()
-
-
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('config', type=Path, help='path to config .yaml file')
-    parser.add_argument('output_dir', type=Path, help='output directory to save model to')
-
-    parser.add_argument('--cuda', action='store_true', help='use CUDA')
-    parser.add_argument('--cuda-device', type=int, help='CUDA device num', default=None)
-
-    parser.add_argument('--fp16', action='store_true',
-                        help='Enables half precision training')
-
-    parser.add_argument('-r', '--resume', action='store_true',
-                        help='will continue training existing checkpoint')
-    parser.add_argument('-f', '--force', action='store_true',
-                        help='overwrite existing checkpoint')
-
-    args, _ = parser.parse_known_args()
-
-    if os.environ.get("DEBUG"):
-        level = logging.DEBUG
-    else:
-        level = logging.INFO
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-                        level=level)
-
-    _train(args)
