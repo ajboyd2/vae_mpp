@@ -21,8 +21,14 @@ class PPAggregator(nn.Module):
         self.mu_network = nn.Linear(hidden_size, hidden_size)
         self.log_sigma_network = nn.Linear(hidden_size, hidden_size)
 
+    def _concat(self, hidden_states, context_lengths):
+        assert(len(hidden_states.shape) == 3)
+        assert(len(context_lengths.shape) == 2)
+
+        return hidden_states.gather(dim=1, index=context_lengths.unsqueeze(-1).expand(-1, -1, hidden_states.shape[-1])).squeeze(1)
+
     def forward(self, hidden_states, context_lengths, sample_override=False):
-        extracted_states = self.method(hidden_states)
+        extracted_states = self.method(hidden_states, context_lengths)
 
         mu, log_sigma = self.mu_network(extracted_states), self.log_sigma_network(extracted_states)
 
