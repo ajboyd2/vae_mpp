@@ -8,9 +8,11 @@ from torch.utils.data import Dataset
 
 
 PADDING_VALUES = {
-    "times": float('inf'),
+    "times": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
     "marks": 0,
-    "padding_mask": 0
+    "times_backwards": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
+    "marks_backwards": 0,
+    "padding_mask": 0,
 }
 
 def _ld_to_dl(ld, padded_size):
@@ -30,7 +32,7 @@ def pad_and_combine_instances(batch):
     A collate function for padding and combining instance dictionaries.
     """
     batch_size = len(batch)
-    max_seq_len = max(ex["context_lengths"] for ex in batch)
+    max_seq_len = max(len(ex["times"]) for ex in batch)
 
     out_dict = _ld_to_dl(batch, max_seq_len)
 
@@ -52,12 +54,16 @@ class PointPatternDataset(Dataset):
 
     def __getitem__(self, idx):
         instance =  self._instances[idx]
-        return {
+        item = {
             'times': torch.FloatTensor(instance["times"]),
-            'marks': torch.LongTensor(instance["marks"]),
+            'marks': torch.LongTensor(instance["marks"]), 
+            'times_backwards': torch.FloatTensor(instance["times"][::-1]),
+            'marks_backwards': torch.LongTensor(instance["marks"][::-1]),
             'padding_mask': torch.ones(len(instance["marks"]), dtype=torch.uint8),
-            'context_lengths': torch.LongTensor(len(instance["times"])),
+            'context_lengths': torch.LongTensor([len(instance["times"]) - 1]),  # these will be used for indexing later, hence the subtracting 1
         }
+
+        return item
 
     def __len__(self):
         return len(self._instances)
