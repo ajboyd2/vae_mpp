@@ -23,8 +23,6 @@ def get_model(
     dropout=0.2,
 ):
 
-    enc_hidden_size = enc_hidden_size // (2 if enc_bidirectional else 1)
-
     time_embedding = TemporalEmbedding(
         embedding_dim=time_embedding_size,
         use_raw_time=use_raw_time,
@@ -41,7 +39,7 @@ def get_model(
         encoder = PPEncoder(
             channel_embedding=channel_embedding,
             time_embedding=time_embedding,
-            hidden_size=enc_hidden_size,
+            hidden_size=enc_hidden_size // (2 if enc_bidirectional else 1),  # This produces output hidden sizes of enc_hidden_size no matter what
             bidirectional=enc_bidirectional,
             num_recurrent_layers=enc_num_recurrent_layers,
             dropout=dropout 
@@ -65,7 +63,7 @@ def get_model(
         num_recurrent_layers=dec_num_recurrent_layers,
         recurrent_hidden_size=dec_recurrent_hidden_size,
         dropout=dropout,
-        latent_size=enc_hidden_size,
+        latent_size=enc_hidden_size if use_encoder else 0,
     )
 
     return PPModel(
