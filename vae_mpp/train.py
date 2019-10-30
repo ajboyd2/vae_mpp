@@ -209,7 +209,7 @@ def main():
         if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
             save_checkpoint(args, model, optimizer, lr_scheduler)
         
-        valid_epoch(args, model, valid_dataloader, epoch)
+        eval_epoch(args, model, valid_dataloader, epoch)
 
 if __name__ == "__main__":
     main()
