@@ -1,5 +1,6 @@
 from collections import defaultdict
 from parse import findall
+import numpy as np
 import pickle
 
 import torch
@@ -54,11 +55,12 @@ class PointPatternDataset(Dataset):
 
     def __getitem__(self, idx):
         instance =  self._instances[idx]
+        
         item = {
             'times': torch.FloatTensor(instance["times"]),
             'marks': torch.LongTensor(instance["marks"]), 
-            'times_backwards': torch.FloatTensor(instance["times"][::-1]),
-            'marks_backwards': torch.LongTensor(instance["marks"][::-1]),
+            'times_backwards': torch.FloatTensor(np.ascontiguousarray(instance["times"][::-1])),
+            'marks_backwards': torch.LongTensor(np.ascontiguousarray(instance["marks"][::-1])),
             'padding_mask': torch.ones(len(instance["marks"]), dtype=torch.uint8),
             'context_lengths': torch.LongTensor([len(instance["times"]) - 1]),  # these will be used for indexing later, hence the subtracting 1
         }

@@ -241,12 +241,12 @@ def main():
 
     print_log("Starting training.")
     for epoch in range(args.train_epochs):
-        train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch)
+        train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1)
 
         if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
             save_checkpoint(args, model, optimizer, lr_scheduler)
         
-        eval_epoch(args, model, valid_dataloader, epoch)
+        eval_epoch(args, model, valid_dataloader, epoch+1)
 
 if __name__ == "__main__":
     main()
