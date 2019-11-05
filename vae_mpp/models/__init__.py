@@ -12,6 +12,7 @@ def get_model(
     enc_hidden_size,
     enc_bidirectional, 
     enc_num_recurrent_layers,
+    latent_size,
     agg_method,
     agg_noise,
     use_encoder,
@@ -48,6 +49,7 @@ def get_model(
         aggregator = PPAggregator(
             method=agg_method,
             hidden_size=enc_hidden_size,
+            latent_size=latent_size,
             noise=agg_noise,
         )
     else:
@@ -63,7 +65,7 @@ def get_model(
         num_recurrent_layers=dec_num_recurrent_layers,
         recurrent_hidden_size=dec_recurrent_hidden_size,
         dropout=dropout,
-        latent_size=enc_hidden_size if use_encoder else 0,
+        latent_size=latent_size if use_encoder else 0,
     )
 
     return PPModel(

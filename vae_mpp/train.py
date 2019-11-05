@@ -12,6 +12,7 @@ from collections import defaultdict
 
 #from apex import amp
 import numpy as np
+from sklearn.linear_model import LogisticRegression
 import torch
 from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_ as clip_grad
@@ -71,7 +72,7 @@ def forward_pass(args, batch, model):
         "ll_neg": ll_neg_contrib,
         "kl_divergence": kl_term,
         "mmd_divergence": mmd_term,
-    }
+    }, results
 
 def backward_pass(args, loss, model, optimizer):
     
@@ -86,7 +87,7 @@ def backward_pass(args, loss, model, optimizer):
 
 def train_step(args, model, optimizer, lr_scheduler, batch):
 
-    loss_results = forward_pass(args, batch, model)
+    loss_results, _ = forward_pass(args, batch, model)
 
     backward_pass(args, loss_results["loss"], model, optimizer)
 
@@ -96,12 +97,12 @@ def train_step(args, model, optimizer, lr_scheduler, batch):
 
     return loss_results
 
-def train_epoch(args, model, optimizer, lr_scheduler, data_loader, epoch_number):
+def train_epoch(args, model, optimizer, lr_scheduler, dataloader, epoch_number):
     model.train()
 
     total_losses = defaultdict(lambda: 0.0)
-    data_len = len(data_loader)
-    for i, batch in enumerate(data_loader):
+    data_len = len(dataloader)
+    for i, batch in enumerate(dataloader):
         batch_loss = train_step(args, model, optimizer, lr_scheduler, batch)
         for k, v in batch_loss.items():
             total_losses[k] += v.item()
@@ -116,18 +117,57 @@ def train_epoch(args, model, optimizer, lr_scheduler, data_loader, epoch_number)
 def eval_step(args, model, batch):
     return forward_pass(args, batch, model)
 
-def eval_epoch(args, model, data_loader, epoch_number):
+def eval_epoch(args, model, valid_dataloader, train_dataloader, epoch_number):
     model.eval()
+
     with torch.no_grad():
         total_losses = defaultdict(lambda: 0.0)
-        data_len = len(data_loader)
-        for i, batch in enumerate(data_loader):
-            batch_loss = eval_step(args, model, batch)
+        data_len = len(valid_dataloader)
+        valid_latents, valid_labels = [], []
+        for i, batch in enumerate(valid_dataloader):
+            batch_loss, results = eval_step(args, model, batch)
+            if args.classify_latents:
+                valid_latents.append(results["latent_state_dict"]["latent_state"])
+                valid_labels.append(batch["pp_id"])
             for k, v in batch_loss.items():
                 total_losses[k] += v.item()
-        
+
     print_results(args, [(k,v/data_len) for k,v in total_losses.items()], epoch_number, i+1, data_len, False)
 
+    if args.classify_latents:
+        with torch.no_grad():
+            train_latents, train_labels = [], []
+            for batch in train_dataloader:
+                _, results = eval_step(args, model, batch)
+                train_latents.append(results["latent_state_dict"]["latent_state"])
+                train_labels.append(batch["pp_id"])
+
+        train_latents = torch.cat(train_latents, dim=0).squeeze().numpy()
+        train_labels = torch.cat(train_labels, dim=0).squeeze().numpy()
+        valid_latents = torch.cat(valid_latents, dim=0).squeeze().numpy()
+        valid_labels = torch.cat(valid_labels, dim=0).squeeze().numpy()
+        clf = LogisticRegression(
+            random_state=args.seed, 
+            solver="liblinear",
+            multi_class="auto",
+        ).fit(train_latents, train_labels)
+
+        train_acc, valid_acc = clf.score(train_latents, train_labels), clf.score(valid_latents, valid_labels)
+
+        t_vals, t_counts = np.unique(train_labels, return_counts=True)
+        t_most_freq_val, t_most_freq_count = t_vals[t_counts.argmax()], t_counts.max()
+        naive_train_acc = t_most_freq_count / len(train_labels)
+
+        v_vals, v_counts = np.unique(valid_labels, return_counts=True)
+        v_most_freq_count = v_counts[np.where(v_vals == t_most_freq_val)[0][0]]
+        naive_valid_acc = v_most_freq_count / len(valid_labels) 
+
+        print_log("[C] Epoch {}/{} | Train Acc {:.4E} | Valid Acc {:.4E} | (N) Train Acc {:.4E} | (N) Valid Acc {:.4E}".format(
+            epoch_number, args.train_epochs,
+            train_acc, valid_acc,
+            naive_train_acc, naive_valid_acc,
+        ))
+        
 def print_results(args, items, epoch_number, iteration, data_len, training=True):
     msg = "[{}] Epoch {}/{} | Iter {}/{} | ".format("T" if training else "V", epoch_number, args.train_epochs, iteration, data_len)
     msg += "".join("{} {:.4E} | ".format(k, v) for k,v in items)
@@ -153,6 +193,7 @@ def setup_model_and_optim(args, epoch_len):
         enc_hidden_size=args.enc_hidden_size,
         enc_bidirectional=args.enc_bidirectional, 
         enc_num_recurrent_layers=args.enc_num_recurrent_layers,
+        latent_size=args.latent_size,
         agg_method=args.agg_method,
         agg_noise=args.agg_noise,
         use_encoder=args.use_encoder,
@@ -240,13 +281,16 @@ def main():
     report_model_stats(model)
 
     print_log("Starting training.")
+
+    eval_epoch(args, model, valid_dataloader, train_dataloader, 0)
+
     for epoch in range(args.train_epochs):
         train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1)
 
         if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
             save_checkpoint(args, model, optimizer, lr_scheduler)
         
-        eval_epoch(args, model, valid_dataloader, epoch+1)
+        eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1)
 
 if __name__ == "__main__":
     main()

@@ -21,6 +21,7 @@ def model_config_args(parser):
     group.add_argument("--enc_hidden_size", type=int, default=8, help="Hidden size for encoder GRU.")
     group.add_argument("--enc_bidirectional", action="store_true", help="Enables bidirectional encoding.")
     group.add_argument("--enc_num_recurrent_layers", type=int, default=1, help="Number of recurrent GRU layers in encoder.")
+    group.add_argument("--latent_size", type=int, default=4, help="Final size of the latent vector.")
     group.add_argument("--agg_method", type=str, default="concat", help="Method to use for aggregating hidden states from encoder")
     group.add_argument("--agg_noise", action="store_true", help="Add random noise during training to encoded latent vector.")
     group.add_argument("--use_encoder", action="store_true", help="Setup the model in a VAE fashion.")
@@ -52,6 +53,7 @@ def training_args(parser):
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
     group.add_argument("--valid_data_path", type=str, default="./data/1_pp/validation.pickle", help="Path to training data file.")
+    group.add_argument("--classify_latents", action='store_true', help="On validation, train a logistic regression model on latent vectors to classify PP id and report results.")
     #group.add_argument("--", type=, default=, help="")
 
 def sampling_args(parser):

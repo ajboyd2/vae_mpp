@@ -8,7 +8,7 @@ from .utils import xavier_truncated_normal, ACTIVATIONS
 class PPAggregator(nn.Module):
     """Transforms output of a PPEncoder into a latent vector for injestion by a PPDecoder."""
 
-    def __init__(self, method, hidden_size, noise=True):
+    def __init__(self, method, hidden_size, latent_size, noise=True):
         super().__init__()
 
         self.noise = noise
@@ -18,8 +18,8 @@ class PPAggregator(nn.Module):
         else:
             raise ValueError
 
-        self.mu_network = nn.Linear(hidden_size, hidden_size)
-        self.log_sigma_network = nn.Linear(hidden_size, hidden_size)
+        self.mu_network = nn.Linear(hidden_size, latent_size)
+        self.log_sigma_network = nn.Linear(hidden_size, latent_size)
 
     def _concat(self, hidden_states, context_lengths):
         assert(len(hidden_states.shape) == 3)
