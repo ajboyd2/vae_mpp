@@ -82,6 +82,8 @@ def get_args():
 
     args = parser.parse_args()
 
+    args.do_valid = args.valid_data_path != ""
+
     if not args.dont_print_args:
         print_args(vars(args))
 

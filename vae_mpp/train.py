@@ -31,9 +31,9 @@ def forward_pass(args, batch, model):
         = batch["marks"], batch["times"], batch["context_lengths"], batch["padding_mask"]
     marks_backwards, timestamps_backwards = batch["marks_backwards"], batch["times_backwards"]
 
-    T = 50.0  # TODO: Make this adjustable
+    T = batch["T"]  
 
-    sample_timestamps = torch.rand_like(timestamps).clamp(min=1e-6) * T  # ~ U(0, T)
+    sample_timestamps = torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
 
     # Forward Pass
     results = model(
@@ -215,7 +215,7 @@ def setup_model_and_optim(args, epoch_len):
 
 def get_data(args):
     train_dataset = PointPatternDataset(file_path=args.train_data_path)
-    valid_dataset = PointPatternDataset(file_path=args.valid_data_path)
+    args.num_channels = train_dataset.vocab_size
 
     train_dataloader = DataLoader(
         dataset=train_dataset,
@@ -226,14 +226,23 @@ def get_data(args):
         drop_last=True,
     )
 
-    valid_dataloader = DataLoader(
-        dataset=valid_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=pad_and_combine_instances,
-        drop_last=True,
-    )
+    print_log("Loaded {} training examples from {}".format(len(train_dataset), args.train_data_path))
+
+    if args.do_valid:
+        valid_dataset = PointPatternDataset(file_path=args.valid_data_path)
+
+        valid_dataloader = DataLoader(
+            dataset=valid_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=pad_and_combine_instances,
+            drop_last=True,
+        )
+        print_log("Loaded {} validation examples from {}".format(len(valid_dataset), args.valid_data_path))
+    else:
+        valid_dataloader = None
+
 
     return train_dataloader, valid_dataloader    
 
@@ -282,7 +291,8 @@ def main():
 
     print_log("Starting training.")
 
-    eval_epoch(args, model, valid_dataloader, train_dataloader, 0)
+    if args.do_valid:
+        eval_epoch(args, model, valid_dataloader, train_dataloader, 0)
 
     for epoch in range(args.train_epochs):
         train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1)
@@ -290,7 +300,8 @@ def main():
         if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
             save_checkpoint(args, model, optimizer, lr_scheduler)
         
-        eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1)
+        if args.do_valid:
+            eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1)
 
 if __name__ == "__main__":
     main()

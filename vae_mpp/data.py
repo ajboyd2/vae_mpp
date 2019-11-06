@@ -1,7 +1,9 @@
-from collections import defaultdict
-from parse import findall
 import numpy as np
 import pickle
+import json
+
+from collections import defaultdict
+from parse import findall
 
 import torch
 from torch.nn import functional as F
@@ -55,7 +57,7 @@ class PointPatternDataset(Dataset):
 
     def __getitem__(self, idx):
         instance =  self._instances[idx]
-        
+
         item = {
             'times': torch.FloatTensor(instance["times"]),
             'marks': torch.LongTensor(instance["marks"]), 
@@ -63,7 +65,11 @@ class PointPatternDataset(Dataset):
             'marks_backwards': torch.LongTensor(np.ascontiguousarray(instance["marks"][::-1])),
             'padding_mask': torch.ones(len(instance["marks"]), dtype=torch.uint8),
             'context_lengths': torch.LongTensor([len(instance["times"]) - 1]),  # these will be used for indexing later, hence the subtracting 1
+            'T': torch.FloatTensor([instance["T"]]),
         }
+
+        if "pp_obj_id" in instance:
+            item["pp_id"] = torch.LongTensor([instance["pp_obj_id"]])
 
         return item
 
@@ -77,6 +83,14 @@ class PointPatternDataset(Dataset):
             with open(file_path, "rb") as f:
                 collection = pickle.load(f)
             instances = collection["sequences"]
+            for instance in instances:
+                if "T" not in instance:
+                    instance["T"] = 50.0
+        elif ".json" in file_path:
+            instances = []
+            with open(file_path, 'r') as f:
+                for line in f:
+                    instances.append(json.loads(line))
         else:
             with open(file_path, 'r') as f:
                 instances = []
@@ -84,6 +98,7 @@ class PointPatternDataset(Dataset):
                     items = [(float(r.fixed[0]), int(r.fixed[1])) for r in findall("({},{})", line.strip())]
                     times, marks = zip(*items)
                     instances.append({
+                        "T": 50.0,
                         "times": times,
                         "marks": marks
                     })
