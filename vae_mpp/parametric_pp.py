@@ -107,6 +107,24 @@ class PointProcess(ABC):
                 np.split(marks, split_indices),
                 np.split(intensity_values, split_indices))
 
+class HomogenousPoissonProcess(PointProcess):
+
+    def __init__(self, K, scale):
+        super().__init__(conditional=False)
+        self.K = K
+        self.scale = rand.rand(K) * scale
+        
+    def intensity(self, t, batch=None):
+        scale = self.scale
+        x = np.repeat(t[:, :, np.newaxis], self.K, axis=2)
+        return scale * ((x*0) + 1)  # just to get the same size
+
+    def update(self, t, k, batch):
+        return
+
+    def __repr__(self):
+        return "K={}\nScale={}".format(self.K, self.scale)
+
 class InhomogenousPoissonProcess(PointProcess):
 
     def __init__(self, K, scale, right_limit):
