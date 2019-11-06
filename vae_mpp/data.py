@@ -102,6 +102,6 @@ class PointPatternDataset(Dataset):
                         "times": times,
                         "marks": marks
                     })
-        vocab_size = max(max(instance["marks"]) for instance in instances)
+        vocab_size = max(max(instance["marks"]) for instance in instances) + 1
 
         return instances, vocab_size
