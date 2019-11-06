@@ -53,7 +53,15 @@ class PointPatternDataset(Dataset):
         As of writing this, "t" should be a floating point number, and "k" should be a non-negative integer.
         The max value of "k" seen in the dataset determines the vocabulary size.
         """
-        self._instances, self.vocab_size = self.read_instances(file_path)
+        if isinstance(file_path, list):
+            self._instances = []
+            self.vocab_size = 0
+            for fp in file_path:
+                instances, vocab_size = self.read_instances(fp)
+                self._instances.extend(instances)
+                self.vocab_size = max(self.vocab_size, vocab_size)
+        else:
+            self._instances, self.vocab_size = self.read_instances(file_path)
 
     def __getitem__(self, idx):
         instance =  self._instances[idx]

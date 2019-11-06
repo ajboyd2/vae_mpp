@@ -34,9 +34,10 @@ def model_config_args(parser):
 
 def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
-    group.add_argument("--checkpoint_path", type=str, default="./", help="")
+    group.add_argument("--checkpoint_path", type=str, default="./", help="Path to folder that contains model checkpoints. Will take the most recent one.")
+    group.add_argument("--finetune", action="store_true", help="Will load in a model from the checkpoint path to finetune.")
     group.add_argument("--train_epochs", type=int, default=40, help="Number of epochs to iterate over for training.")
-    group.add_argument("--train_data_path", type=str, default="./data/1_pp/training.pickle", help="Path to training data file.")
+    group.add_argument("--train_data_path", nargs="+", type=str, default=["./data/1_pp/training.pickle"], help="Path to training data file.")
     group.add_argument("--num_workers", type=int, default=0, help="Number of parallel workers for data loaders.")
     group.add_argument("--batch_size", type=int, default=32, help="Number of samples per batch.")
     group.add_argument("--log_interval", type=int, default=100, help="Number of batches to complete before printing intermediate results.")
@@ -52,7 +53,7 @@ def training_args(parser):
 
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
-    group.add_argument("--valid_data_path", type=str, default="./data/1_pp/validation.pickle", help="Path to training data file.")
+    group.add_argument("--valid_data_path", nargs="+", type=str, default=["./data/1_pp/validation.pickle"], help="Path to training data file.")
     group.add_argument("--classify_latents", action='store_true', help="On validation, train a logistic regression model on latent vectors to classify PP id and report results.")
     #group.add_argument("--", type=, default=, help="")
 
