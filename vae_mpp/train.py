@@ -226,7 +226,7 @@ def get_data(args):
         drop_last=True,
     )
 
-    print_log("Loaded {} training examples from {}".format(len(train_dataset), args.train_data_path))
+    print_log("Loaded {} / {} training examples / batches from {}".format(len(train_dataset), len(train_dataloader), args.train_data_path))
 
     if args.do_valid:
         valid_dataset = PointPatternDataset(file_path=args.valid_data_path)
@@ -239,18 +239,35 @@ def get_data(args):
             collate_fn=pad_and_combine_instances,
             drop_last=True,
         )
-        print_log("Loaded {} validation examples from {}".format(len(valid_dataset), args.valid_data_path))
+        print_log("Loaded {} / {} validation examples / batches from {}".format(len(valid_dataset), len(valid_dataloader), args.valid_data_path))
     else:
         valid_dataloader = None
 
 
     return train_dataloader, valid_dataloader    
 
-def save_checkpoint(args, model, optimizer, lr_scheduler):
-    pass
+def save_checkpoint(args, model, optimizer, lr_scheduler, epoch):
+    # Create folder if not already created
+    folder_path = args.checkpoint_path
+    folders = folder_path.split("/")
+    for i in range(len(folders)):
+        if folders[i] == "":
+            continue
+        intermediate_path = "/".join(folders[:i+1])
+        if not os.path.exists(intermediate_path):
+            os.mkdir(intermediate_path)
+
+    final_path = "{}/model_{}.pt".format(folder_path.rstrip("/"), epoch)
+    torch.save(model.state_dict(), final_path)
+    print_log("Saved model at {}".format(final_path))
 
 def load_checkpoint(args, model):
-    pass
+    folder_path = args.checkpoint_path
+    files = [f for f in os.listdir(path) if "model_" in f]
+    file_path = sorted(files)[-1]
+
+    model.load_state_dict(torch.load(file_path))
+    print_log("Loaded model from {}".format(file_path))
 
 def report_model_stats(model):
     encoder_parameter_count = 0
@@ -289,6 +306,9 @@ def main():
 
     report_model_stats(model)
 
+    if args.finetune:
+        load_checkpoint(args, model)
+
     print_log("Starting training.")
 
     if args.do_valid:
@@ -298,7 +318,7 @@ def main():
         train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1)
 
         if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
-            save_checkpoint(args, model, optimizer, lr_scheduler)
+            save_checkpoint(args, model, optimizer, lr_scheduler, epoch)
         
         if args.do_valid:
             eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1)
