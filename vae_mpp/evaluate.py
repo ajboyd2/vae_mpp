@@ -19,7 +19,10 @@ def save_and_vis_intensities(args, model, dataloader):
     colors = sns.color_palette()
     pp_objs = None
     for i, batch in enumerate(dataloader):
+        if args.cuda:
+            batch = {k:v.cuda(torch.cuda.current_device()) for k,v in batch.items()}
         T = batch["T"][0].item()
+        '''
         if "pp_id" in batch:
             pp_obj_idx = batch["pp_id"][0].item()
             if pp_objs is None:
@@ -31,11 +34,22 @@ def save_and_vis_intensities(args, model, dataloader):
                     pp.alpha = _pp["alpha"]
                     pp.delta = _pp["delta"]
                     pp_objs.append(pp)
-        all_times = torch.linspace(0, T, 500, dtype=torch.float).unsqueeze(0) + 1e-8
+        '''
+        all_times = torch.linspace(0, T, 500, dtype=torch.float, device=batch["T"].device).unsqueeze(0) + 1e-8
+
+        def to_cpu(obj):
+            if isinstance(obj, dict):
+                return {k:to_cpu(v) for k,v in obj.items()}
+            elif isinstance(obj, list):
+                return [to_cpu(v) for v in obj]
+            else:
+                return obj.cpu()
 
         # Process Batch
         with torch.no_grad():
             losses, results = forward_pass(args, batch, model, sample_timestamps=all_times)
+            results = to_cpu(results)
+            all_times = to_cpu(all_times)
 
         print(i, results["latent_state_dict"]["latent_state"].tolist())
 
