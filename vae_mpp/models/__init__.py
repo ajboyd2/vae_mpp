@@ -7,6 +7,7 @@ def get_model(
     time_embedding_size, 
     use_raw_time, 
     use_delta_time, 
+    max_period,
     channel_embedding_size,
     num_channels,
     enc_hidden_size,
@@ -19,6 +20,7 @@ def get_model(
     dec_recurrent_hidden_size,
     dec_num_recurrent_layers,
     dec_intensity_hidden_size,
+    dec_intensity_factored_heads,
     dec_num_intensity_layers,
     dec_act_func="gelu",
     dropout=0.2,
@@ -29,6 +31,7 @@ def get_model(
         use_raw_time=use_raw_time,
         use_delta_time=use_delta_time,
         learnable_delta_weights=True,
+        max_period=max_period,
     )
 
     channel_embedding = torch.nn.Embedding(
@@ -66,6 +69,7 @@ def get_model(
         recurrent_hidden_size=dec_recurrent_hidden_size,
         dropout=dropout,
         latent_size=latent_size if use_encoder else 0,
+        factored_heads=dec_intensity_factored_heads,
     )
 
     return PPModel(

@@ -34,6 +34,7 @@ ACTIVATIONS = {
     'log': Log, 
     'identity': Identity,
     'gelu': GELU,
+    'softplus': nn.Softplus,
 }
 
 def truncated_normal(size, scale=1, limit=2):

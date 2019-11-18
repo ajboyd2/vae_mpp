@@ -26,14 +26,15 @@ from vae_mpp.arguments import get_args
 from vae_mpp.utils import kl_div, mmd_div, print_log
 
 
-def forward_pass(args, batch, model):
+def forward_pass(args, batch, model, sample_timestamps=None):
     marks, timestamps, context_lengths, padding_mask \
         = batch["marks"], batch["times"], batch["context_lengths"], batch["padding_mask"]
     marks_backwards, timestamps_backwards = batch["marks_backwards"], batch["times_backwards"]
 
     T = batch["T"]  
 
-    sample_timestamps = torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
+    if sample_timestamps is None:
+        sample_timestamps = torch.rand(timestamps.shape[0], 150, dtype=timestamps.dtype, device=timestamps.device).clamp(min=1e-8) * T #torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
 
     # Forward Pass
     results = model(
@@ -188,6 +189,7 @@ def setup_model_and_optim(args, epoch_len):
         time_embedding_size=args.time_embedding_size, 
         use_raw_time=args.use_raw_time, 
         use_delta_time=args.use_delta_time, 
+        max_period=args.max_period,
         channel_embedding_size=args.channel_embedding_size,
         num_channels=args.num_channels,
         enc_hidden_size=args.enc_hidden_size,
@@ -200,6 +202,7 @@ def setup_model_and_optim(args, epoch_len):
         dec_recurrent_hidden_size=args.dec_recurrent_hidden_size,
         dec_num_recurrent_layers=args.dec_num_recurrent_layers,
         dec_intensity_hidden_size=args.dec_intensity_hidden_size,
+        dec_intensity_factored_heads=args.dec_intensity_factored_heads,
         dec_num_intensity_layers=args.dec_num_intensity_layers,
         dec_act_func=args.dec_act_func,
         dropout=args.dropout,
@@ -220,11 +223,13 @@ def get_data(args):
     train_dataloader = DataLoader(
         dataset=train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=args.shuffle,
         num_workers=args.num_workers,
         collate_fn=pad_and_combine_instances,
         drop_last=True,
     )
+
+    args.max_period = train_dataset.get_max_T() / 2.0
 
     print_log("Loaded {} / {} training examples / batches from {}".format(len(train_dataset), len(train_dataloader), args.train_data_path))
 
@@ -234,7 +239,7 @@ def get_data(args):
         valid_dataloader = DataLoader(
             dataset=valid_dataset,
             batch_size=args.batch_size,
-            shuffle=False,
+            shuffle=args.shuffle,
             num_workers=args.num_workers,
             collate_fn=pad_and_combine_instances,
             drop_last=True,
@@ -258,13 +263,15 @@ def save_checkpoint(args, model, optimizer, lr_scheduler, epoch):
             os.mkdir(intermediate_path)
 
     final_path = "{}/model_{}.pt".format(folder_path.rstrip("/"), epoch)
+    if os.path.exists(final_path):
+        os.remove(final_path)
     torch.save(model.state_dict(), final_path)
     print_log("Saved model at {}".format(final_path))
 
 def load_checkpoint(args, model):
     folder_path = args.checkpoint_path
-    files = [f for f in os.listdir(path) if "model_" in f]
-    file_path = sorted(files)[-1]
+    files = [f for f in os.listdir(folder_path) if ".pt" in f]
+    file_path = "{}/{}".format(folder_path.rstrip("/"), sorted(files)[-1])
 
     model.load_state_dict(torch.load(file_path))
     print_log("Loaded model from {}".format(file_path))

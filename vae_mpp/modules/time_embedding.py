@@ -11,14 +11,14 @@ class SinusoidalEmbedding(nn.Module):
     Attributes:
         weight {torch.tensor} -- Weight tensor to multiply with incoming times
     """
-    def __init__(self, embedding_dim, learnable=False, random=False):
+    def __init__(self, embedding_dim, learnable=False, random=False, max_period=10000.0):
         super().__init__()
 
         self.random = random
         if random:
             weight = xavier_truncated_normal(size=embedding_dim//2, limit=2)
         else:
-            weight = torch.exp(torch.arange(0, embedding_dim, 2).float() * (-math.log(10000.0) / embedding_dim))
+            weight = torch.exp(torch.arange(0, embedding_dim, 2).float() * (-math.log(max_period) / embedding_dim))
     
         if learnable:
             self.register_parameter('weight', nn.Parameter(weight))
@@ -37,11 +37,12 @@ class ExponentialEmbedding(SinusoidalEmbedding):
         weight {torch.tensor} -- Weight tensor to multiply with incoming times
     """
 
-    def __init__(self, embedding_dim, learnable=True, random=True):
+    def __init__(self, embedding_dim, learnable=True, random=True, max_period=10000.0):
         super().__init__(
             embedding_dim=embedding_dim * (2 if random else 1),  #  If used in conjunction with SinusoidalEmbeddings, should follow the torch.cat(...) pattern 
             learnable=learnable,
             random=random,
+            max_period=max_period,
         )
 
     def forward(self, t):
@@ -59,7 +60,7 @@ class SinExpEmbedding(nn.Module):
         exp_embed {ExponentialEmbedding} -- An optional module containing exponential embeddings
     """
 
-    def __init__(self, embedding_dim, use_sinusoidal=True, use_exponential=False, sin_rand=False, exp_rand=False):
+    def __init__(self, embedding_dim, use_sinusoidal=True, use_exponential=False, sin_rand=False, exp_rand=False, max_period=10000.0):
         super().__init__()
 
         assert(use_sinusoidal or use_exponential)
@@ -69,6 +70,7 @@ class SinExpEmbedding(nn.Module):
                 embedding_dim=embedding_dim,
                 learnable=sin_rand,  # For now, assume if the weights are randomly initialized, then they are also learnable
                 random=sin_rand,
+                max_period=max_period,
             )
         else:
             self.sin_embed = None
@@ -78,6 +80,7 @@ class SinExpEmbedding(nn.Module):
                 embedding_dim=embedding_dim,
                 learnable=exp_rand,  # For now, assume if the weights are randomly initialized, then they are also learnable
                 random=exp_rand,
+                max_period=max_period,
             )
         else:
             self.exp_embed = None
@@ -104,7 +107,7 @@ class TemporalEmbedding(nn.Module):
         embedding_dim {int} -- Size of the output embedding dimension
     """
 
-    def __init__(self, embedding_dim, use_raw_time=True, use_delta_time=False, learnable_delta_weights=True):
+    def __init__(self, embedding_dim, use_raw_time=True, use_delta_time=False, learnable_delta_weights=True, max_period=10000.0):
         super().__init__()
 
         assert(use_raw_time or use_delta_time)
@@ -117,6 +120,7 @@ class TemporalEmbedding(nn.Module):
                 use_exponential=False,
                 sin_rand=False,
                 exp_rand=False,
+                max_period=max_period,
             )
         else:
             self.raw_time_embed = None
@@ -128,6 +132,7 @@ class TemporalEmbedding(nn.Module):
                 use_exponential=True,
                 sin_rand=False,
                 exp_rand=True,
+                max_period=max_period,
             )
         else:
             self.delta_time_embed = None

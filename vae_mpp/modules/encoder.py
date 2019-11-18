@@ -47,8 +47,12 @@ class PPEncoder(nn.Module):
                 name="backward_init_hidden_state",
                 param=nn.Parameter(xavier_truncated_normal(size=(num_recurrent_layers, 1, hidden_size), no_average=True))
             )
+            out_size = hidden_size * 2
         else:
             self.backward_recurrent_net = None
+            out_size = hidden_size
+        
+        self.last_linear_layer = nn.Sequential(nn.Linear(out_size, out_size), ACTIVATIONS["gelu"]())
 
     def forward(self, forward_marks, forward_timestamps, backward_marks=None, backward_timestamps=None):
         steps = [(forward_marks, forward_timestamps, self.forward_recurrent_net, self.forward_init_hidden_state)]
@@ -65,4 +69,4 @@ class PPEncoder(nn.Module):
             hidden_states = recurrent_net(recurrent_input)[0]  # output is a tuple, first element are all hidden states for last layer second is last hidden state for all layers
             last_hidden_states.append(hidden_states)
 
-        return torch.cat(last_hidden_states, dim=-1)
+        return self.last_linear_layer(torch.cat(last_hidden_states, dim=-1))

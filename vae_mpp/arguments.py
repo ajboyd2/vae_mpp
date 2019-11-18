@@ -27,6 +27,7 @@ def model_config_args(parser):
     group.add_argument("--use_encoder", action="store_true", help="Setup the model in a VAE fashion.")
     group.add_argument("--dec_recurrent_hidden_size", type=int, default=16, help="Hidden size for decoder GRU.")
     group.add_argument("--dec_num_recurrent_layers", type=int, default=1, help="Number of recurrent layers in decoder.")
+    group.add_argument("--dec_intensity_factored_heads", action="store_true", help="If enabled, models the logged total intensity and proporation of marks separately.")
     group.add_argument("--dec_intensity_hidden_size", type=int, default=16, help="Hidden size of intermediate layers in intensity network.")
     group.add_argument("--dec_num_intensity_layers", type=int, default=1, help="Number of layers in intensity network.")
     group.add_argument("--dec_act_func", type=str, default="gelu", help="Activation function to be used in intensity network.")
@@ -50,6 +51,7 @@ def training_args(parser):
     group.add_argument("--weight_decay", type=float, default=0.01, help="L2 coefficient for weight decay.")
     group.add_argument("--warmup_pct", type=float, default=0.01, help="Percentage of 'train_iters' to be spent ramping learning rate up from 0.")
     group.add_argument("--lr_decay_style", type=str, default="cosine", help="Decay style for the learning rate, after the warmup period.")
+    group.add_argument("--dont_shuffle", action="store_true", help="Don't shuffle training and validation dataloaders.")
 
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
@@ -84,6 +86,7 @@ def get_args():
     args = parser.parse_args()
 
     args.do_valid = args.valid_data_path != ""
+    args.shuffle = not args.dont_shuffle
 
     if not args.dont_print_args:
         print_args(vars(args))

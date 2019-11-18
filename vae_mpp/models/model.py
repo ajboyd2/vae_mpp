@@ -60,8 +60,9 @@ class PPModel(nn.Module):
         )
 
         if marks is not None:
-            gathered_probs = intensity_dict["log_mark_probs"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1)
-            intensity_dict["log_mark_intensity"] = gathered_probs + intensity_dict["log_intensity"]
+            #gathered_probs = intensity_dict["log_mark_probs"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1)
+            #intensity_dict["log_mark_intensity"] = gathered_probs + intensity_dict["log_intensity"]
+            intensity_dict["log_mark_intensity"] = intensity_dict["all_log_mark_intensities"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1)
         
         return intensity_dict 
         
@@ -144,6 +145,23 @@ class PPModel(nn.Module):
             )
             return_dict["sample_intensities"] = sample_intensities
         
+        '''
+        ### REMOVE LATER
+        return_dict["sample_intensities"]["total_intensity"] = return_dict["sample_intensities"]["total_intensity"]*0 + 1.5
+        return_dict["tgt_intensities"]["total_intensity"] = return_dict["tgt_intensities"]["total_intensity"]*0 + 1.5
+        #print((tgt_marks==1).float().mean(dim=-1).shape)
+        return_dict["tgt_intensities"]["all_log_mark_intensities"][:, :, 0] = torch.log(1.5 * (tgt_marks==0).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
+        return_dict["tgt_intensities"]["all_log_mark_intensities"][:, :, 1] = torch.log(1.5 * (tgt_marks==1).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
+        return_dict["tgt_intensities"]["all_log_mark_intensities"][:, :, 2] = torch.log(1.5 * (tgt_marks==2).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
+        return_dict["sample_intensities"]["all_log_mark_intensities"][:, :, 0] = torch.log(1.5 * (tgt_marks==0).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
+        return_dict["sample_intensities"]["all_log_mark_intensities"][:, :, 1] = torch.log(1.5 * (tgt_marks==1).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
+        return_dict["sample_intensities"]["all_log_mark_intensities"][:, :, 2] = torch.log(1.5 * (tgt_marks==2).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
+
+        #print(return_dict["sample_intensities"])
+        #exit()
+        ###
+        '''
+
         return return_dict
 
     @staticmethod
@@ -170,10 +188,10 @@ class PPModel(nn.Module):
         # num_samples = return_dict["sample_intensities"]["log_intensity"].shape[1]
         log_mark_intensity = return_dict["tgt_intensities"]["log_mark_intensity"]
         positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity)).sum(dim=-1)
-        negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["log_intensity"].exp().mean(dim=-1)  # Summing and divided by number of samples
+        negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["total_intensity"].mean(dim=-1)  # Summing and divided by number of samples
 
         return {
-            "log_likelihood": (positive_samples - negative_samples).mean(),
+            "log_likelihood": ((1.0 * positive_samples) - negative_samples).mean(),
             "positive_contribution": positive_samples.mean(),
             "negative_contribution": negative_samples.mean(),
         }
