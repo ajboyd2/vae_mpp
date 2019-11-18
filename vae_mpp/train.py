@@ -27,6 +27,9 @@ from vae_mpp.utils import kl_div, mmd_div, print_log
 
 
 def forward_pass(args, batch, model, sample_timestamps=None):
+    if args.cuda:
+        batch = {k:v.cuda(torch.cuda.current_device()) for k,v in batch.items()}
+
     marks, timestamps, context_lengths, padding_mask \
         = batch["marks"], batch["times"], batch["context_lengths"], batch["padding_mask"]
     marks_backwards, timestamps_backwards = batch["marks_backwards"], batch["times_backwards"]
