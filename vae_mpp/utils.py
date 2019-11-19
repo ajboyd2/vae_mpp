@@ -24,8 +24,8 @@ def compute_mmd(x, y):
     mmd = x_kernel.mean() + y_kernel.mean() - 2*xy_kernel.mean()
     return mmd
 
-def kl_div(mu, log_sigma_sq):
-    return (0.5 * (mu ** 2 + torch.exp(log_sigma_sq) - log_sigma_sq - 1).sum(dim=1)).mean()
+def kl_div(mu, log_var):
+    return (0.5 * (mu.pow(2) + torch.exp(log_var) - log_var - 1).sum(dim=1)).mean()
 
 def mmd_div(z):
     true_samples = torch.randn_like(z)

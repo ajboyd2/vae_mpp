@@ -22,6 +22,7 @@ def get_model(
     dec_intensity_hidden_size,
     dec_intensity_factored_heads,
     dec_num_intensity_layers,
+    dec_intensity_use_embeddings,
     dec_act_func="gelu",
     dropout=0.2,
 ):
@@ -70,6 +71,7 @@ def get_model(
         dropout=dropout,
         latent_size=latent_size if use_encoder else 0,
         factored_heads=dec_intensity_factored_heads,
+        use_embedding_weights=dec_intensity_use_embeddings,
     )
 
     return PPModel(

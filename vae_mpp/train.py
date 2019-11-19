@@ -62,12 +62,15 @@ def forward_pass(args, batch, model, sample_timestamps=None):
         ll_results["log_likelihood"], ll_results["positive_contribution"], ll_results["negative_contribution"]
 
     if args.agg_noise and args.use_encoder:
-        kl_term = kl_div(results["latent_state_dict"]["mu"], 2 * results["latent_state_dict"]["log_sigma"])
+        kl_term = kl_div(results["latent_state_dict"]["mu"], results["latent_state_dict"]["log_var"])
         mmd_term = mmd_div(results["latent_state_dict"]["latent_state"])
     else:
         kl_term, mmd_term = torch.zeros_like(log_likelihood), torch.zeros_like(log_likelihood)
 
-    loss = (-1 * log_likelihood) + ((1 - args.loss_alpha) * kl_term) + ((args.loss_alpha + args.loss_lambda - 1) * mmd_term)
+    objective = log_likelihood - (args.loss_beta * kl_term) - (args.loss_lambda * mmd_term)
+    loss = -1 * objective  # minimize loss, maximize objective
+
+    #print_log("Beta: {:.4f} | Lambda: {:.4f}".format(args.loss_beta, args.loss_lambda))
 
     return {
         "loss": loss,
@@ -112,11 +115,17 @@ def train_epoch(args, model, optimizer, lr_scheduler, dataloader, epoch_number):
             total_losses[k] += v.item()
         
         if (i+1) % args.log_interval == 0:
-            print_results(args, [("LR", lr_scheduler.get_lr())] + [(k,v/args.log_interval) for k,v in total_losses.items()], epoch_number, i+1, data_len, True)
+            items_to_print = [("LR", lr_scheduler.get_lr())]
+            items_to_print.extend([(k,v/args.log_interval) for k,v in total_losses.items()])
+            items_to_print.extend([("beta", args.loss_beta), ("lambda", args.loss_lambda)])
+            print_results(args, items_to_print, epoch_number, i+1, data_len, True)
             total_losses = defaultdict(lambda: 0.0)
 
     if (i+1) % args.log_interval != 0:
-        print_results(args, [("LR", lr_scheduler.get_lr())] + [(k,v/(i % args.log_interval)) for k,v in total_losses.items()], epoch_number, i+1, data_len, True)
+        items_to_print = [("LR", lr_scheduler.get_lr())]
+        items_to_print.extend([(k,v/(i % args.log_interval)) for k,v in total_losses.items()])
+        items_to_print.extend([("beta", args.loss_beta), ("lambda", args.loss_lambda)])
+        print_results(args, items_to_print, epoch_number, i+1, data_len, True)
 
 def eval_step(args, model, batch):
     return forward_pass(args, batch, model)
@@ -207,6 +216,7 @@ def setup_model_and_optim(args, epoch_len):
         dec_intensity_hidden_size=args.dec_intensity_hidden_size,
         dec_intensity_factored_heads=args.dec_intensity_factored_heads,
         dec_num_intensity_layers=args.dec_num_intensity_layers,
+        dec_intensity_use_embeddings=args.dec_intensity_use_embeddings,
         dec_act_func=args.dec_act_func,
         dropout=args.dropout,
     )

@@ -30,15 +30,15 @@ class PPAggregator(nn.Module):
     def forward(self, hidden_states, context_lengths, sample_override=False):
         extracted_states = self.method(hidden_states, context_lengths)
 
-        mu, log_sigma = self.mu_network(extracted_states), self.log_sigma_network(extracted_states)
+        mu, log_var = self.mu_network(extracted_states), self.log_sigma_network(extracted_states)
 
         if self.training or sample_override:
-            latent_state = torch.randn_like(mu) * torch.exp(log_sigma) + mu
+            latent_state = torch.randn_like(mu) * torch.exp(log_var / 2.0) + mu
         else:
             latent_state = mu
 
         return {
             "latent_state": latent_state,
             "mu": mu,
-            "log_sigma": log_sigma,
+            "log_var": log_var,
         }
