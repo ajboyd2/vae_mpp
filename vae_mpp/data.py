@@ -56,8 +56,10 @@ class PointPatternDataset(Dataset):
         """
         if len(file_path) == 1 and os.path.isdir(file_path[0]):
             file_path = [file_path[0].rstrip("/") + "/" + fp for fp in os.listdir(file_path[0])]
+            file_path = sorted(file_path)
             print(file_path)
 
+        self.user_mapping = {}
         if isinstance(file_path, list):
             self._instances = []
             self.vocab_size = 0
@@ -67,7 +69,7 @@ class PointPatternDataset(Dataset):
                 self.vocab_size = max(self.vocab_size, vocab_size)
         else:
             self._instances, self.vocab_size = self.read_instances(file_path)
-        self.user_mapping = {}
+        print(self.user_mapping)
 
     def __getitem__(self, idx):
         instance =  self._instances[idx]
@@ -126,4 +128,8 @@ class PointPatternDataset(Dataset):
                     })
         vocab_size = max(max(instance["marks"]) for instance in instances) + 1
 
+        for item in instances:
+            if "user" in item and (item["user"] not in self.user_mapping):
+                self.user_mapping[item["user"]] = len(self.user_mapping)
+        
         return instances, vocab_size

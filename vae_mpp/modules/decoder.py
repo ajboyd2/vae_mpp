@@ -33,13 +33,19 @@ class IntensityNet(nn.Module):
         self.preprocessing_net = nn.Sequential(*flatten(preprocessing_layers))
 
         self.factored_heads = factored_heads
+        self.mark_net = nn.Linear(hidden_size, channel_embedding_dim if use_embedding_weights else num_channels)
+        self.use_embedding_weights = use_embedding_weights
+        if use_embedding_weights:
+            print("USING EMBEDDING WEIGHTS")
+        else:
+            print("NOT USING EMBEDDING WEIGHTS")
+            
         if factored_heads:
-            self.mark_net = nn.Linear(hidden_size, channel_embedding_dim if use_embedding_weights else num_channels)
+            print("FACTORED HEADS")
             self.intensity_net = nn.Linear(hidden_size, 1)
-            self.use_embedding_weights = use_embedding_weights
         else:
             print("NON FACTORED HEADS")
-            self.mark_net = nn.Sequential(nn.Linear(hidden_size, num_channels), ACTIVATIONS["softplus"]())
+            self.softplus = nn.Softplus()
 
     def forward(self, *args):
         x = torch.cat(args, dim=-1)
@@ -48,17 +54,16 @@ class IntensityNet(nn.Module):
         pre_out = self.preprocessing_net(x)
 
         mark_net_out = self.mark_net(pre_out)
+        if self.use_embedding_weights:
+            mark_net_out = F.linear(mark_net_out, self.channel_embedding.weight)  # No bias by default
+        
         if self.factored_heads:
-            if self.use_embedding_weights:
-                log_mark_probs = F.linear(self.mark_net(pre_out), self.channel_embedding.weight)  # No bias by default
-            else:
-                log_mark_probs = mark_net_out
-
-            log_mark_probs = F.log_softmax(log_mark_probs, dim=-1)
+            log_mark_probs = F.log_softmax(mark_net_out, dim=-1)
             log_intensity = self.intensity_net(pre_out)
             all_log_mark_intensities = log_mark_probs + log_intensity
             total_intensity = log_intensity.exp().squeeze(dim=-1)
         else:
+            mark_net_out = self.softplus(mark_net_out)
             all_log_mark_intensities = torch.log(mark_net_out + 1e-12)
             total_intensity = mark_net_out.sum(dim=-1)
 
@@ -83,6 +88,7 @@ class PPDecoder(nn.Module):
         latent_size=None,
         factored_heads=True,
         estimate_init_state=True,
+        use_embedding_weights=True,
     ):
         super().__init__()
 
@@ -104,6 +110,7 @@ class PPDecoder(nn.Module):
             act_func=act_func,
             dropout=dropout,
             factored_heads=factored_heads,
+            use_embedding_weights=use_embedding_weights,
         )
 
         self.recurrent_input_size = latent_size + self.channel_embedding_size + self.time_embedding_dim
@@ -159,9 +166,9 @@ class PPDecoder(nn.Module):
 
         if self.estimate_init_state:
             init_hidden_state = self.init_hidden_state_network(latent_state).view(-1, self.num_recurrent_layers, self.recurrent_hidden_size)
-            init_hidden_state = torch.transpose(init_hidden_state, 0, 1)
+            init_hidden_state = torch.transpose(init_hidden_state, 0, 1).contiguous()
         else:
-            init_hidden_state = self.init_hidden_state.expand(-1, recurrent_input.shape[0], -1)  # Match batch size
+            init_hidden_state = self.init_hidden_state.expand(-1, recurrent_input.shape[0], -1).contiguous()  # Match batch size
         hidden_states, _ = self.recurrent_net(recurrent_input, init_hidden_state) 
 
         return torch.cat((init_hidden_state[-1, :, :].unsqueeze(1), hidden_states), dim=1)
@@ -192,5 +199,5 @@ class PPDecoder(nn.Module):
         if latent_state is not None:
             components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
 
-        intensity_input = torch.cat(components, dim=-1)
+        #intensity_input = torch.cat(components, dim=-1)
         return self.intensity_net(*components)#intensity_input)

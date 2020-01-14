@@ -33,6 +33,7 @@ def model_config_args(parser):
     group.add_argument("--dec_num_intensity_layers", type=int, default=1, help="Number of layers in intensity network.")
     group.add_argument("--dec_act_func", type=str, default="gelu", help="Activation function to be used in intensity network.")
     group.add_argument("--dropout", type=float, default=0.2, help="Dropout rate to be applied to all supported layers during training.")
+    group.add_argument("--not_amortized", action="store_true", help="Selecting this will disable amortization.")
 
 def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
@@ -90,6 +91,7 @@ def get_args():
 
     args.do_valid = args.valid_data_path != ""
     args.shuffle = not args.dont_shuffle
+    args.amortized = not args.not_amortized
 
     if not args.dont_print_args:
         print_args(vars(args))

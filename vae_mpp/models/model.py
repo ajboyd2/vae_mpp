@@ -1,5 +1,6 @@
 import torch
-from torch import nn
+import torch.nn as nn
+import torch.nn.functional as F
 
 NORMS = (
     nn.LayerNorm,
@@ -16,7 +17,15 @@ NORMS = (
 
 class PPModel(nn.Module):
 
-    def __init__(self, decoder, encoder=None, aggregator=None):
+    def __init__(
+        self, 
+        decoder, 
+        encoder=None, 
+        aggregator=None, 
+        amortized=True,
+        p_z=torch.distributions.Laplace,
+        q_z_x=torch.distributions.Laplace,
+    ):
         """Constructor for general PPModel class.
         
         Arguments:
@@ -33,7 +42,22 @@ class PPModel(nn.Module):
         self.encoder = encoder
         self.aggregator = aggregator
         self.has_encoder = (encoder is not None) and (aggregator is not None)
-    
+        self.amortized = amortized
+        if not amortized:
+            self.latent_mu = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
+            #self.latent_log_var = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
+            self.latent_sigma = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
+        
+        self.p_z = p_z
+        self.q_z_x = q_z_x
+        self._p_z_params = nn.ParameterList([
+            nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False),  # mu
+            nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False)  # logvar
+        ])
+
+    def get_prior_params(self):
+        return self._p_z_params[0], F.softmax(self._p_z_params[1], dim=-1) * self._p_z_params[1].size(-1)
+
     def get_states(self, tgt_marks, tgt_timestamps, latent_state):
         """Get the hidden states that can be used to extract intensity values from."""
         
@@ -66,18 +90,37 @@ class PPModel(nn.Module):
         
         return intensity_dict 
         
-    def get_latent(self, ref_marks_fwd, ref_timestamps_fwd, ref_marks_bwd, ref_timestamps_bwd, context_lengths):
+    def get_latent(self, ref_marks_fwd, ref_timestamps_fwd, ref_marks_bwd, ref_timestamps_bwd, context_lengths, pp_id):
         """Computes latent variable for a given set of reference marks and timestamped events."""
-        hidden_states = self.encoder(
-            forward_marks=ref_marks_fwd,
-            forward_timestamps=ref_timestamps_fwd,
-            backward_marks=ref_marks_bwd,
-            backward_timestamps=ref_timestamps_bwd,
-        )
+        if self.amortized:
+            hidden_states = self.encoder(
+                forward_marks=ref_marks_fwd,
+                forward_timestamps=ref_timestamps_fwd,
+                backward_marks=ref_marks_bwd,
+                backward_timestamps=ref_timestamps_bwd,
+            )
 
-        return self.aggregator(hidden_states, context_lengths)
+            return self.aggregator(hidden_states, context_lengths)
+        else:
+            #mu, log_var = self.latent_mu(pp_id), self.latent_log_var(pp_id)
+            #mu, log_var = mu.squeeze(dim=1), log_var.squeeze(dim=1)
+            raise NotImplementedError
+            mu, sigma = self.latent_mu(pp_id), self.latent_sigma(pp_id)
+            mu, sigma = mu.squeeze(dim=1), sigma.squeeze(dim=1)
 
-    def forward(self, ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths, sample_timestamps=None):
+            if self.training:
+                #latent_state = torch.randn_like(mu) * torch.exp(log_var / 2.0) + mu
+                latent_state = torch.randn_like(mu) * sigma + mu
+            else:
+                latent_state = mu
+
+            return {
+                "latent_state": latent_state,
+                "mu": mu,
+                "sigma": sigma,
+            }
+
+    def forward(self, ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths, sample_timestamps=None, pp_id=None):
         """Encodes a(n optional) set of marks and timestamps into a latent vector, 
         then decodes corresponding intensity values for a target set of timestamps and marks 
         (as well as a sample set if specified).
@@ -107,15 +150,17 @@ class PPModel(nn.Module):
                 ref_marks_bwd=ref_marks_bwd,
                 ref_timestamps_bwd=ref_timestamps_bwd,
                 context_lengths=context_lengths,
+                pp_id=pp_id,
             )
         else:
             latent_state_dict = {
                 "latent_state": None,
-                "mu": None,
-                "log_sigma": None,
+                "q_z_x": None,
             }
-        return_dict["latent_state_dict"] = latent_state_dict
         latent_state = latent_state_dict["latent_state"]
+        return_dict["latent_state"] = latent_state
+        return_dict["q_z_x"] = latent_state_dict["q_z_x"]
+        return_dict["p_z"] = self.p_z(*self.get_prior_params())        
 
         # Decoding phase
         intensity_state_dict = self.get_states(
@@ -144,23 +189,6 @@ class PPModel(nn.Module):
                 marks=None,
             )
             return_dict["sample_intensities"] = sample_intensities
-        
-        '''
-        ### REMOVE LATER
-        return_dict["sample_intensities"]["total_intensity"] = return_dict["sample_intensities"]["total_intensity"]*0 + 1.5
-        return_dict["tgt_intensities"]["total_intensity"] = return_dict["tgt_intensities"]["total_intensity"]*0 + 1.5
-        #print((tgt_marks==1).float().mean(dim=-1).shape)
-        return_dict["tgt_intensities"]["all_log_mark_intensities"][:, :, 0] = torch.log(1.5 * (tgt_marks==0).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
-        return_dict["tgt_intensities"]["all_log_mark_intensities"][:, :, 1] = torch.log(1.5 * (tgt_marks==1).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
-        return_dict["tgt_intensities"]["all_log_mark_intensities"][:, :, 2] = torch.log(1.5 * (tgt_marks==2).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
-        return_dict["sample_intensities"]["all_log_mark_intensities"][:, :, 0] = torch.log(1.5 * (tgt_marks==0).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
-        return_dict["sample_intensities"]["all_log_mark_intensities"][:, :, 1] = torch.log(1.5 * (tgt_marks==1).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
-        return_dict["sample_intensities"]["all_log_mark_intensities"][:, :, 2] = torch.log(1.5 * (tgt_marks==2).float().mean(dim=-1).unsqueeze(-1) + 1e-12)
-
-        #print(return_dict["sample_intensities"])
-        #exit()
-        ###
-        '''
 
         return return_dict
 

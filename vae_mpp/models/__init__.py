@@ -25,6 +25,7 @@ def get_model(
     dec_intensity_use_embeddings,
     dec_act_func="gelu",
     dropout=0.2,
+    amortized=True,
 ):
 
     time_embedding = TemporalEmbedding(
@@ -55,6 +56,8 @@ def get_model(
             hidden_size=enc_hidden_size,
             latent_size=latent_size,
             noise=agg_noise,
+            q_z_x=torch.distributions.Laplace,
+
         )
     else:
         encoder = None
@@ -78,4 +81,7 @@ def get_model(
         decoder=decoder,
         encoder=encoder,
         aggregator=aggregator,
+        amortized=amortized,
+        q_z_x=aggregator.q_z_x if aggregator is not None else torch.distributions.Laplace,
+        p_z=torch.distributions.Laplace,
     )

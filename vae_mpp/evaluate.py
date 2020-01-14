@@ -42,6 +42,8 @@ def save_and_vis_intensities(args, model, dataloader):
                 return {k:to_cpu(v) for k,v in obj.items()}
             elif isinstance(obj, list):
                 return [to_cpu(v) for v in obj]
+            elif isinstance(obj, torch.distributions.distribution.Distribution):
+                return obj
             else:
                 return obj.cpu()
 
@@ -51,7 +53,7 @@ def save_and_vis_intensities(args, model, dataloader):
             results = to_cpu(results)
             all_times = to_cpu(all_times)
 
-        print(i, results["latent_state_dict"]["latent_state"].tolist())
+        print(i, results["latent_state"].tolist())
 
         fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(12,8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
         fig.tight_layout()
@@ -100,7 +102,7 @@ def save_and_vis_intensities(args, model, dataloader):
         if os.path.exists(final_path):
             os.remove(final_path)
         fig.savefig(final_path,
-                    dpi=400,
+                    dpi=150,
                     bbox_inches="tight")
 
 def main():

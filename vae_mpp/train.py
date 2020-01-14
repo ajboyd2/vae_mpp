@@ -33,6 +33,7 @@ def forward_pass(args, batch, model, sample_timestamps=None):
     marks, timestamps, context_lengths, padding_mask \
         = batch["marks"], batch["times"], batch["context_lengths"], batch["padding_mask"]
     marks_backwards, timestamps_backwards = batch["marks_backwards"], batch["times_backwards"]
+    pp_id = batch["pp_id"]
 
     T = batch["T"]  
 
@@ -48,7 +49,8 @@ def forward_pass(args, batch, model, sample_timestamps=None):
         tgt_marks=marks, 
         tgt_timestamps=timestamps, 
         context_lengths=context_lengths,
-        sample_timestamps=sample_timestamps
+        sample_timestamps=sample_timestamps,
+        pp_id=pp_id,
     )
 
     # Calculate losses
@@ -62,12 +64,14 @@ def forward_pass(args, batch, model, sample_timestamps=None):
         ll_results["log_likelihood"], ll_results["positive_contribution"], ll_results["negative_contribution"]
 
     if args.agg_noise and args.use_encoder:
-        kl_term = kl_div(results["latent_state_dict"]["mu"], results["latent_state_dict"]["log_var"])
-        mmd_term = mmd_div(results["latent_state_dict"]["latent_state"])
+        #kl_term = kl_div(results["latent_state_dict"]["mu"], results["latent_state_dict"]["log_var"])
+        kl_term = kl_div(results["q_z_x"], results["p_z"]).mean()
+        #mmd_term = mmd_div(results["latent_state_dict"]["latent_state"])
     else:
-        kl_term, mmd_term = torch.zeros_like(log_likelihood), torch.zeros_like(log_likelihood)
+        #kl_term, mmd_term = torch.zeros_like(log_likelihood), torch.zeros_like(log_likelihood)
+        kl_term = torch.zeros_like(log_likelihood)
 
-    objective = log_likelihood - (args.loss_beta * kl_term) - (args.loss_lambda * mmd_term)
+    objective = log_likelihood - (args.loss_beta * kl_term) #- (args.loss_lambda * mmd_term)
     loss = -1 * objective  # minimize loss, maximize objective
 
     #print_log("Beta: {:.4f} | Lambda: {:.4f}".format(args.loss_beta, args.loss_lambda))
@@ -78,7 +82,7 @@ def forward_pass(args, batch, model, sample_timestamps=None):
         "ll_pos": ll_pos_contrib,
         "ll_neg": ll_neg_contrib,
         "kl_divergence": kl_term,
-        "mmd_divergence": mmd_term,
+        #"mmd_divergence": mmd_term,
     }, results
 
 def backward_pass(args, loss, model, optimizer):
@@ -219,6 +223,7 @@ def setup_model_and_optim(args, epoch_len):
         dec_intensity_use_embeddings=args.dec_intensity_use_embeddings,
         dec_act_func=args.dec_act_func,
         dropout=args.dropout,
+        amortized=args.amortized,
     )
 
     if args.cuda:
