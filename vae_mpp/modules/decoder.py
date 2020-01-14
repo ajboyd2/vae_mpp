@@ -1,114 +1,203 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-_activations = {
-    'relu': nn.ReLU,
-    'sigmoid': nn.Sigmoid,
-    'tanh': nn.Tanh,
-    'identity': lambda x: (lambda y: y)(x)
-}
+from .utils import xavier_truncated_normal, flatten, find_closest, ACTIVATIONS
 
-class PPDecoder(nn.Module):
 
-    def __init__(self,
-                 num_events,
-                 hidden_size,
-                 event_embedding_size,
-                 time_embedding_size,
-                 latent_size,
-                 intensity_layer_size,
-                 intensity_num_layers,
-                 intensity_act_func,
-                 layer_norm):
-        super(PPDecoder, self).__init__()
+class IntensityNet(nn.Module):
+    """Module that transforms a set of timestamps, hidden states, and latent vector into intensity values for different channels."""
 
-        self.num_events = num_events
-        self.latent_size = latent_size
-        self.hidden_size = hidden_size
-        self.event_embedding_size = event_embedding_size
-        self.time_embedding_size = time_embedding_size
+    def __init__(
+        self,
+        channel_embedding,
+        input_size,
+        hidden_size,
+        num_layers,
+        act_func,
+        dropout,
+        use_embedding_weights=False,
+        factored_heads=True,
+    ):
+        super().__init__()
 
-        if layer_norm in _activations:
-            self.layer_norm = _activations[layer_norm]
-        elif layer_norm == "layer_norm":
-            self.layer_norm = nn.LayerNorm(hidden_size)
+        self.channel_embedding = channel_embedding
+        self.input_size = input_size
+        num_channels, channel_embedding_dim = channel_embedding.weight.shape
+
+        if isinstance(act_func, str):
+            act_func = ACTIVATIONS[act_func]
+        
+        preprocessing_layers = [(nn.Linear(input_size, hidden_size), act_func(), nn.Dropout(p=dropout))]
+        preprocessing_layers.extend([(nn.Linear(hidden_size, hidden_size), act_func(), nn.Dropout(p=dropout)) for _ in range(num_layers-1)])
+        self.preprocessing_net = nn.Sequential(*flatten(preprocessing_layers))
+
+        self.factored_heads = factored_heads
+        self.mark_net = nn.Linear(hidden_size, channel_embedding_dim if use_embedding_weights else num_channels)
+        self.use_embedding_weights = use_embedding_weights
+        if use_embedding_weights:
+            print("USING EMBEDDING WEIGHTS")
         else:
-            raise ModuleNotFoundError("'{}' is not a supported layer normalization operation.".format(layer_norm))
-
-        self.register_buffer("hidden0", torch.zeros(1, hidden_size))
-        self.register_buffer("latent0", torch.FloatTensor())
-
-        self.rnn_cell = nn.GRUCell(input_size=latent_size + event_embedding_size + time_embedding_size,
-                                   hidden_size=hidden_size)
-        if intensity_act_func in _activations:
-            act_func = _activations[intensity_act_func]
+            print("NOT USING EMBEDDING WEIGHTS")
+            
+        if factored_heads:
+            print("FACTORED HEADS")
+            self.intensity_net = nn.Linear(hidden_size, 1)
         else:
-            raise ModuleNotFoundError("'{}' is not a supported activation function.".format(intensity_act_func))
+            print("NON FACTORED HEADS")
+            self.softplus = nn.Softplus()
 
-        intensity_layers = list()
-        intensity_layers.append(nn.Linear(latent_size + hidden_size + time_embedding_size, intensity_layer_size))
-        intensity_layers.append(act_func())
+    def forward(self, *args):
+        x = torch.cat(args, dim=-1)
+        assert(x.shape[-1] == self.input_size)
 
-        for _ in range(intensity_num_layers - 1):
-            intensity_layers.append(nn.Linear(intensity_layer_size, intensity_layer_size))
-            intensity_layers.append(act_func())
+        pre_out = self.preprocessing_net(x)
 
-        self.intensity_net_pre = nn.Sequential(*intensity_layers)
+        mark_net_out = self.mark_net(pre_out)
+        if self.use_embedding_weights:
+            mark_net_out = F.linear(mark_net_out, self.channel_embedding.weight)  # No bias by default
+        
+        if self.factored_heads:
+            log_mark_probs = F.log_softmax(mark_net_out, dim=-1)
+            log_intensity = self.intensity_net(pre_out)
+            all_log_mark_intensities = log_mark_probs + log_intensity
+            total_intensity = log_intensity.exp().squeeze(dim=-1)
+        else:
+            mark_net_out = self.softplus(mark_net_out)
+            all_log_mark_intensities = torch.log(mark_net_out + 1e-12)
+            total_intensity = mark_net_out.sum(dim=-1)
 
-        self.intensity_net = nn.Sequential(
-            nn.Linear(intensity_layer_size, 1)
-        )
-
-        self.mark_net = nn.Sequential(
-            nn.Linear(intensity_layer_size, num_events),
-            nn.LogSoftmax(dim=1)
-        )
-
-    def forward(self, time_embed, mark_embed, mask=None, latent_state=None):
-        # time_embed.shape = (seq, batch, embed)
-        # mark_embed.shape = (seq, batch, embed)
-        # mask.shape       = (seq, batch)
-        seq_len, batch_size, _ = time_embed.shape
-        hidden_state = self.hidden0.expand(batch_size, -1)
-        if latent_state is None:
-            latent_state = self.latent0
-
-        output = {
-            "log_intensities": [],
-            "log_probs": [],
-            "pre_out": [],
-            "hidden_states": [],
-            "mask": mask,
-            "latent_state": latent_state
+        return {
+            "all_log_mark_intensities": all_log_mark_intensities,
+            "total_intensity": total_intensity,
         }
 
-        for i in range(seq_len):
-            time_step = time_embed[i, :, :]
-            mark_step = mark_embed[i, :, :]
+class PPDecoder(nn.Module):
+    """Decoder module that transforms a set of marks, timestamps, and latent vector into intensity values for different channels."""
 
-            if mask is not None:
-                mask_step = mask[i, :].unsqueeze(-1).expand(-1, self.hidden_size)
+    def __init__(
+        self,
+        channel_embedding,
+        time_embedding,
+        act_func,
+        num_intensity_layers,
+        intensity_hidden_size,
+        num_recurrent_layers,
+        recurrent_hidden_size,
+        dropout,
+        latent_size=None,
+        factored_heads=True,
+        estimate_init_state=True,
+        use_embedding_weights=True,
+    ):
+        super().__init__()
 
-            pre_out = self.intensity_net_pre(
-                torch.cat((latent_state, hidden_state, time_step), dim=-1)
+        self.channel_embedding = channel_embedding
+        self.time_embedding = time_embedding
+        self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding.weight.shape[-1], self.time_embedding.embedding_dim
+        
+        #nn.Embedding(
+        #    num_embeddings=num_channels,
+        #    embedding_dim=channel_embedding_size,
+        #    _weight=xavier_truncated_normal((num_channels, channel_embedding_size))
+        #)
+
+        self.intensity_net = IntensityNet(
+            channel_embedding=self.channel_embedding,
+            input_size=latent_size + self.time_embedding_dim + recurrent_hidden_size,
+            hidden_size=intensity_hidden_size,
+            num_layers=num_intensity_layers,
+            act_func=act_func,
+            dropout=dropout,
+            factored_heads=factored_heads,
+            use_embedding_weights=use_embedding_weights,
+        )
+
+        self.recurrent_input_size = latent_size + self.channel_embedding_size + self.time_embedding_dim
+        self.recurrent_net =  nn.GRU(
+            input_size=self.recurrent_input_size,
+            hidden_size=recurrent_hidden_size,
+            num_layers=num_recurrent_layers,
+            bidirectional=False,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+        self.latent_size = latent_size
+        self.num_recurrent_layers = num_recurrent_layers
+        self.recurrent_hidden_size = recurrent_hidden_size
+        self.estimate_init_state = (latent_size is not None) and estimate_init_state
+        if self.estimate_init_state:
+            print("ESTIMATING INITIAL STATE")
+            self.init_hidden_state_network = nn.Sequential(
+                nn.Linear(latent_size, num_recurrent_layers * recurrent_hidden_size),
+                #ACTIVATIONS["gelu"](),
+            )
+        else:
+            print("NOT ESTIMATING INITIAL STATE")
+            self.register_parameter(
+                name="init_hidden_state",
+                param=nn.Parameter(xavier_truncated_normal(size=(num_recurrent_layers, 1, recurrent_hidden_size), no_average=True))
             )
 
-            output["log_intensities"].append(self.intensity_net(pre_out))
-            output["log_probs"].append(self.mark_net(pre_out))
-            output["pre_out"].append(pre_out)
+    def get_states(self, marks, timestamps, latent_state=None):
+        """Produce the set of hidden states from a given set of marks, timestamps, and latent vector that can then be used to calculate intensities.
+        
+        Arguments:
+            marks {torch.LongTensor} -- Tensor containing mark ids that correspond to channel embeddings.
+            timestamps {torch.FloatTensor} -- Tensor containing times of events that correspond to the marks.
 
-            hidden_state_prime = self.layer_norm(self.rnn_cell(
-                torch.cat((latent_state, time_step, mark_step), dim=-1),
-                hidden_state
-            ))
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            torch.FloatTensor -- Corresponding hidden states that represent the history of the point process.
+        """
 
-            if mask is not None:
-                hidden_state = torch.where(mask_step, hidden_state_prime, hidden_state)
-            else:
-                hidden_state = hidden_state_prime
+        components = []
+        components.append(self.channel_embedding(marks))
+        components.append(self.time_embedding(timestamps))
 
-            output["hidden_states"].append(hidden_state)
+        if latent_state is not None:
+             components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
 
-        output["log_intensities"] = torch.stack(output["log_intensities"], dim=0)
-        output["log_probs"] = torch.stack(output["log_probs"], dim=0)
-        return output
+        recurrent_input = torch.cat(components, dim=-1)
+        assert(recurrent_input.shape[-1] == self.recurrent_input_size)
+
+        if self.estimate_init_state:
+            init_hidden_state = self.init_hidden_state_network(latent_state).view(-1, self.num_recurrent_layers, self.recurrent_hidden_size)
+            init_hidden_state = torch.transpose(init_hidden_state, 0, 1).contiguous()
+        else:
+            init_hidden_state = self.init_hidden_state.expand(-1, recurrent_input.shape[0], -1).contiguous()  # Match batch size
+        hidden_states, _ = self.recurrent_net(recurrent_input, init_hidden_state) 
+
+        return torch.cat((init_hidden_state[-1, :, :].unsqueeze(1), hidden_states), dim=1)
+
+    def get_intensity(self, state_values, state_times, timestamps, latent_state=None):
+        """Gennerate intensity values for a point process.
+        
+        Arguments:
+            state_values {torch.FloatTensor} -- Output hidden states from `get_states` call.
+            state_times {torch.FloatTensor} -- Corresponding timestamps used to generate state_values. These are the "true event times" to be compared against.
+            timestamps {torch.FloatTensor} -- Times to generate intensity values for.
+        
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            [type] -- [description]
+        """
+        closest_dict = find_closest(sample_times=timestamps, true_times=state_times)
+
+        padded_state_values = state_values #torch.cat((self.init_hidden_state[[-1], :, :].expand(state_values.shape[0], -1, -1), state_values), dim=1)  # To match dimensions from when closest values were found
+
+        selected_hidden_states = padded_state_values.gather(dim=1, index=closest_dict["closest_indices"].unsqueeze(-1).expand(-1, -1, padded_state_values.shape[-1]))
+
+        time_embedding = self.time_embedding(timestamps, state_times)
+
+        components = [time_embedding, selected_hidden_states]
+        if latent_state is not None:
+            components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
+
+        #intensity_input = torch.cat(components, dim=-1)
+        return self.intensity_net(*components)#intensity_input)

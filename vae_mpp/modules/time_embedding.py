@@ -1,119 +1,157 @@
+import math
 import torch
 import torch.nn as nn
 
+from .utils import xavier_truncated_normal, find_closest
 
-class TimeEmbedding(nn.Module):
 
-    def __init__(
-            self,
-            time_embedding_dim,
-            raw_frequency=False,
-            raw_decay=False,
-            delta_frequency=True,
-            delta_decay=True,
-            learnable_frequency=False,
-            learnable_decay=True,
-            weight_share=True
-    ):
-        super(TimeEmbedding, self).__init__()
+class SinusoidalEmbedding(nn.Module):
+    """Sinusoidal-based encodings. Taken from https://pytorch.org/tutorials/beginner/transformer_tutorial.html
 
-        self.embedding_size = time_embedding_dim
+    Attributes:
+        weight {torch.tensor} -- Weight tensor to multiply with incoming times
+    """
+    def __init__(self, embedding_dim, learnable=False, random=False, max_period=10000.0):
+        super().__init__()
 
-        if (raw_frequency or raw_decay) and (delta_frequency or delta_decay):
-            working_embedding_size = time_embedding_dim / 2
+        self.random = random
+        if random:
+            weight = xavier_truncated_normal(size=embedding_dim//2, limit=2)
         else:
-            working_embedding_size = time_embedding_dim
-
-        if raw_frequency:
-            raw_freq_weights = 1 / (10000 ** (torch.arange(0.0, working_embedding_size, 2) / working_embedding_size))
-            if learnable_frequency:
-                self.raw_freq_weights = nn.Parameter(raw_freq_weights)
-            else:
-                self.register_buffer("raw_freq_weights", raw_freq_weights)
+            weight = torch.exp(torch.arange(0, embedding_dim, 2).float() * (-math.log(max_period) / embedding_dim))
+    
+        if learnable:
+            self.register_parameter('weight', nn.Parameter(weight))
         else:
-            self.raw_freq_weights = None
+            self.register_buffer('weight', weight)
 
-        if raw_decay:
-            raw_decay_weights = 1 / (20 + torch.rand(int(working_embedding_size // 2)) * 30)
-            if learnable_decay:
-                self.raw_decay_weights = nn.Parameter(raw_decay_weights)
-            else:
-                self.register_buffer("raw_decay_weights", raw_decay_weights)
+    def forward(self, t):
+        sin_emb = torch.sin(t * self.weight)
+        cos_emb = torch.cos(t * self.weight)
+        return torch.cat((sin_emb, cos_emb), dim=-1)
+
+class ExponentialEmbedding(SinusoidalEmbedding):
+    """Exponential decay based embedding.
+    
+    Attributes:
+        weight {torch.tensor} -- Weight tensor to multiply with incoming times
+    """
+
+    def __init__(self, embedding_dim, learnable=True, random=True, max_period=10000.0):
+        super().__init__(
+            embedding_dim=embedding_dim * (2 if random else 1),  #  If used in conjunction with SinusoidalEmbeddings, should follow the torch.cat(...) pattern 
+            learnable=learnable,
+            random=random,
+            max_period=max_period,
+        )
+
+    def forward(self, t):
+        embedding = torch.exp(-t * self.weight.abs())
+        if self.random:
+            return embedding
         else:
-            self.raw_decay_weights = 0
+            return torch.cat((embedding, embedding), dim=-1)
 
-        if delta_frequency:
-            if raw_frequency and weight_share:
-                self.delta_freq_weights = self.raw_freq_weights
-            else:
-                delta_freq_weights = 1 / (10000 ** (torch.arange(0.0, working_embedding_size, 2) / working_embedding_size))
-                if learnable_frequency:
-                    self.delta_freq_weights = nn.Parameter(delta_freq_weights)
-                else:
-                    self.register_buffer("delta_freq_weights", delta_freq_weights)
+class SinExpEmbedding(nn.Module):
+    """Houses a SinusoidalEmbedding and/or ExponentialEmbedding, where the results are element-wise multiplied together.
+    
+    Attributes:
+        sin_embed {SinusoidalEmbedding} -- An optional module containing sinusoidal embeddings
+        exp_embed {ExponentialEmbedding} -- An optional module containing exponential embeddings
+    """
+
+    def __init__(self, embedding_dim, use_sinusoidal=True, use_exponential=False, sin_rand=False, exp_rand=False, max_period=10000.0):
+        super().__init__()
+
+        assert(use_sinusoidal or use_exponential)
+        
+        if use_sinusoidal:
+            self.sin_embed = SinusoidalEmbedding(
+                embedding_dim=embedding_dim,
+                learnable=sin_rand,  # For now, assume if the weights are randomly initialized, then they are also learnable
+                random=sin_rand,
+                max_period=max_period,
+            )
         else:
-            self.delta_freq_weights = None
-
-        if delta_decay:
-            if raw_decay and weight_share:
-                self.delta_decay_weights = self.raw_decay_weights
-            else:
-                delta_decay_weights = 1 / (20 + torch.rand(int(working_embedding_size // 2)) * 30)
-                if learnable_decay:
-                    self.delta_decay_weights = nn.Parameter(delta_decay_weights)
-                else:
-                    self.register_buffer("delta_decay_weights", delta_decay_weights)
+            self.sin_embed = None
+        
+        if use_exponential:
+            self.exp_embed = ExponentialEmbedding(
+                embedding_dim=embedding_dim,
+                learnable=exp_rand,  # For now, assume if the weights are randomly initialized, then they are also learnable
+                random=exp_rand,
+                max_period=max_period,
+            )
         else:
-            self.delta_decay_weights = 0
-
-    def forward(self, t, sample_map=None):
-        '''
-        sample_map is a byte tensor containing zeros in positions where values of t are for sampling
-        purposes and do not represent true events.
-        '''
-
-        assert(len(t.shape) == 3)
-        assert(t.shape[-1] == 1)
-
-        if (self.delta_freq_weights is None) and (self.delta_decay_weights == 0):
-            return torch.cat((
-                torch.cos(t * self.raw_freq_weights) * torch.exp(-t * abs(self.raw_decay_weights)),
-                torch.sin(t * self.raw_freq_weights) * torch.exp(-t * abs(self.raw_decay_weights))
-            ), dim=-1)
+            self.exp_embed = None
+        
+    def forward(self, t):
+        if self.sin_embed:
+            sin_embedding = self.sin_embed(t)
         else:
-            ref_t = torch.zeros_like(t[0, :, :])  # slice across batches along the first time step
-            deltas = []
+            sin_embedding = 1
 
-            if sample_map is None:
-                sample_map = torch.ones_like(t, dtype=torch.uint8)
-            else:
-                sample_map = sample_map.unsqueeze(-1).expand(-1, -1, t.shape[-1])
+        if self.exp_embed:
+            exp_embedding = self.exp_embed(t)
+        else:
+            exp_embedding = 1
 
-            for i in range(t.shape[0]):
-                deltas.append(t[i, :, :] - ref_t)
-                ref_t = torch.where(sample_map[i, :, :], t[i, :, :], ref_t)
+        return sin_embedding * exp_embedding
 
-            d = torch.stack(deltas, dim=0)
+class TemporalEmbedding(nn.Module):
+    """Top level embedding that allows for sin|exp based embeddings with raw times and/or time deltas.
+    
+    Attributes:
+        raw_time_embed {SinExpEmbedding} -- Embedding module that embeds raw timestamps
+        delta_time_embed {SinExpEmbedding} -- Embedding module that embeds timestamps based on the difference between them and the nearest true event times
+        embedding_dim {int} -- Size of the output embedding dimension
+    """
 
-            assert(d.shape[0] == t.shape[0])
-            assert(d.shape[1] == t.shape[1])
-            assert(d.shape[2] == t.shape[2])
+    def __init__(self, embedding_dim, use_raw_time=True, use_delta_time=False, learnable_delta_weights=True, max_period=10000.0):
+        super().__init__()
 
-            if self.raw_freq_weights is None:
-                freq_mult = d * self.delta_freq_weights
-                decay_mult = torch.exp(-d * abs(self.delta_decay_weights))
-                return torch.cat((
-                    torch.cos(freq_mult) * decay_mult,
-                    torch.sin(freq_mult) * decay_mult
-                ), dim=-1)
-            else:
-                del_freq_mult = d * self.delta_freq_weights
-                del_decay_mult = torch.exp(-d * abs(self.delta_decay_weights))
-                raw_freq_mult = t * self.raw_freq_weights
-                raw_decay_mult = torch.exp(-t * abs(self.raw_decay_weights))
-                return torch.cat((
-                    torch.cos(del_freq_mult) * del_decay_mult,
-                    torch.sin(del_freq_mult) * del_decay_mult,
-                    torch.cos(raw_freq_mult) * raw_decay_mult,
-                    torch.sin(raw_freq_mult) * raw_decay_mult
-                ), dim=-1)
+        assert(use_raw_time or use_delta_time)
+        num_components = 2 if use_raw_time and use_delta_time else 1
+
+        if use_raw_time:
+            self.raw_time_embed = SinExpEmbedding(
+                embedding_dim=embedding_dim//num_components,
+                use_sinusoidal=True,
+                use_exponential=False,
+                sin_rand=False,
+                exp_rand=False,
+                max_period=max_period,
+            )
+        else:
+            self.raw_time_embed = None
+
+        if use_delta_time:
+            self.delta_time_embed = SinExpEmbedding(
+                embedding_dim=embedding_dim//num_components,
+                use_sinusoidal=True,
+                use_exponential=True,
+                sin_rand=False,
+                exp_rand=True,
+                max_period=max_period,
+            )
+        else:
+            self.delta_time_embed = None
+        
+        self.embedding_dim = embedding_dim
+
+    def forward(self, t, true_times=None):
+        # true_times are the timestamps of events that have actually happened
+        # this is necessary as we sometimes sample for times that don't actually happen
+        if true_times is None:
+            true_times = t
+
+        embeddings = []
+        if self.raw_time_embed:
+            embeddings.append(self.raw_time_embed(t.unsqueeze(-1)))
+
+        if self.delta_time_embed:
+            closest_dict = find_closest(sample_times=t, true_times=true_times)
+            delta_t = t - closest_dict["closest_values"]
+            embeddings.append(self.delta_time_embed(delta_t.unsqueeze(-1)))
+
+        return torch.cat(embeddings, dim=-1)
