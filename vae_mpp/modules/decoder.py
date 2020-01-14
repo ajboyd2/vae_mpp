@@ -91,7 +91,8 @@ class PPDecoder(nn.Module):
         use_embedding_weights=True,
     ):
         super().__init__()
-
+        if latent_size is None:
+            latent_size = 0
         self.channel_embedding = channel_embedding
         self.time_embedding = time_embedding
         self.channel_embedding_size, self.time_embedding_dim = self.channel_embedding.weight.shape[-1], self.time_embedding.embedding_dim
@@ -126,7 +127,7 @@ class PPDecoder(nn.Module):
         self.latent_size = latent_size
         self.num_recurrent_layers = num_recurrent_layers
         self.recurrent_hidden_size = recurrent_hidden_size
-        self.estimate_init_state = (latent_size is not None) and estimate_init_state
+        self.estimate_init_state = (latent_size != 0) and estimate_init_state
         if self.estimate_init_state:
             print("ESTIMATING INITIAL STATE")
             self.init_hidden_state_network = nn.Sequential(

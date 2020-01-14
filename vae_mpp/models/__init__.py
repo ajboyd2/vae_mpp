@@ -75,6 +75,7 @@ def get_model(
         latent_size=latent_size if use_encoder else 0,
         factored_heads=dec_intensity_factored_heads,
         use_embedding_weights=dec_intensity_use_embeddings,
+        estimate_init_state=use_encoder,
     )
 
     return PPModel(
