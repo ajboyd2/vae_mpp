@@ -106,4 +106,4 @@ venv.bak/
 \.idea/
 
 experiments/
-data/
+#data/
