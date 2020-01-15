@@ -2,6 +2,7 @@ import numpy as np
 import pickle
 import json
 import os
+import random
 
 from collections import defaultdict
 from parse import findall
@@ -12,10 +13,12 @@ from torch.utils.data import Dataset
 
 
 PADDING_VALUES = {
-    "times": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
-    "marks": 0,
-    "times_backwards": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
-    "marks_backwards": 0,
+    "ref_times": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
+    "ref_marks": 0,
+    "tgt_times": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
+    "tgt_marks": 0,
+    "ref_times_backwards": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
+    "ref_marks_backwards": 0,
     "padding_mask": 0,
 }
 
@@ -36,7 +39,7 @@ def pad_and_combine_instances(batch):
     A collate function for padding and combining instance dictionaries.
     """
     batch_size = len(batch)
-    max_seq_len = max(len(ex["times"]) for ex in batch)
+    max_seq_len = max(max(len(ex["ref_times"]) for ex in batch), max(len(ex["tgt_times"]) for ex in batch))
 
     out_dict = _ld_to_dl(batch, max_seq_len)
 
@@ -44,8 +47,11 @@ def pad_and_combine_instances(batch):
 
 
 class PointPatternDataset(Dataset):
-    def __init__(self,
-                 file_path):
+    def __init__(
+        self,
+        file_path,
+        args,
+    ):
         """
         Loads text file containing realizations of point processes.
         Each line in the dataset corresponds to one realization.
@@ -60,6 +66,7 @@ class PointPatternDataset(Dataset):
             print(file_path)
 
         self.user_mapping = {}
+        self.user_id = {}
         if isinstance(file_path, list):
             self._instances = []
             self.vocab_size = 0
@@ -69,28 +76,39 @@ class PointPatternDataset(Dataset):
                 self.vocab_size = max(self.vocab_size, vocab_size)
         else:
             self._instances, self.vocab_size = self.read_instances(file_path)
-        print(self.user_mapping)
+
+        self.same_tgt_and_ref = args.same_tgt_and_ref
 
     def __getitem__(self, idx):
-        instance =  self._instances[idx]
+        tgt_instance = self._instances[idx]
+
+        tgt_times, tgt_marks = tgt_instance["times"], tgt_instance["marks"]
+
+        if self.same_tgt_and_ref:
+            ref_times, ref_marks = tgt_times, tgt_marks
+        else:
+            ref_instance = self._instances[random.choice(self.user_mapping[tgt_instance["user"]])]
+            ref_times, ref_marks = ref_instance["times"], ref_instance["marks"]
 
         item = {
-            'times': torch.FloatTensor(instance["times"]),
-            'marks': torch.LongTensor(instance["marks"]), 
-            'times_backwards': torch.FloatTensor(np.ascontiguousarray(instance["times"][::-1])), 
-            'marks_backwards': torch.LongTensor(np.ascontiguousarray(instance["marks"][::-1])),
-            'padding_mask': torch.ones(len(instance["marks"]), dtype=torch.uint8),
-            'context_lengths': torch.LongTensor([len(instance["times"]) - 1]),  # these will be used for indexing later, hence the subtracting 1
-            'T': torch.FloatTensor([instance["T"]]),
+            'ref_times': torch.FloatTensor(ref_times),
+            'ref_marks': torch.LongTensor(ref_marks), 
+            'ref_times_backwards': torch.FloatTensor(np.ascontiguousarray(ref_times[::-1])), 
+            'ref_marks_backwards': torch.LongTensor(np.ascontiguousarray(ref_marks[::-1])),
+            'tgt_times': torch.FloatTensor(tgt_times),
+            'tgt_marks': torch.LongTensor(tgt_marks),
+            'padding_mask': torch.ones(len(tgt_marks), dtype=torch.uint8),
+            'context_lengths': torch.LongTensor([len(ref_times) - 1]),  # these will be used for indexing later, hence the subtracting 1
+            'T': torch.FloatTensor([tgt_instance["T"]]),
         }
 
-        if "pp_obj_id" in instance:
-            item["pp_id"] = torch.LongTensor([instance["pp_obj_id"]])
+        if "pp_obj_id" in tgt_instance:
+            item["pp_id"] = torch.LongTensor([tgt_instance["pp_obj_id"]])
 
-        if "user" in instance:
-            if instance["user"] not in self.user_mapping:
-                self.user_mapping[instance["user"]] = len(self.user_mapping)
-            item["pp_id"] = torch.LongTensor([self.user_mapping[instance["user"]]])
+        if "user" in tgt_instance:
+            if tgt_instance["user"] not in self.user_id:
+                self.user_id[tgt_instance["user"]] = len(self.user_id)
+            item["pp_id"] = torch.LongTensor([self.user_id[tgt_instance["user"]]])
 
         return item
 
@@ -122,14 +140,17 @@ class PointPatternDataset(Dataset):
                     items = [(float(r.fixed[0]), int(r.fixed[1])) for r in findall("({},{})", line.strip())]
                     times, marks = zip(*items)
                     instances.append({
+                        "user": file_path,
                         "T": 50.0,
                         "times": times,
                         "marks": marks
                     })
         vocab_size = max(max(instance["marks"]) for instance in instances) + 1
 
-        for item in instances:
+        for i, item in enumerate(instances):
             if "user" in item and (item["user"] not in self.user_mapping):
-                self.user_mapping[item["user"]] = len(self.user_mapping)
-        
+                self.user_mapping[item["user"]] = [i]
+            elif "user" in item:
+                self.user_mapping[item["user"]].append(i)
+
         return instances, vocab_size

@@ -34,6 +34,7 @@ def model_config_args(parser):
     group.add_argument("--dec_act_func", type=str, default="gelu", help="Activation function to be used in intensity network.")
     group.add_argument("--dropout", type=float, default=0.2, help="Dropout rate to be applied to all supported layers during training.")
     group.add_argument("--not_amortized", action="store_true", help="Selecting this will disable amortization.")
+    group.add_argument("--same_tgt_and_ref", action="store_true", help="Not selecting will mix examples that are being encoded and decoded.")
 
 def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
@@ -61,6 +62,9 @@ def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
     group.add_argument("--valid_data_path", nargs="+", type=str, default=["./data/1_pp/validation.pickle"], help="Path to training data file.")
     group.add_argument("--classify_latents", action='store_true', help="On validation, train a logistic regression model on latent vectors to classify PP id and report results.")
+    group.add_argument("--visualize", action="store_true", help="In evaluate.py selects the visualization script to run.")
+    group.add_argument("--likelihood_over_time", action="store_true", help="In evaluate.py analyzes likelihood over time for a given model.")
+    group.add_argument("--likelihood_resolution", type=float, default=1.0, help="When likelihood_over_time is enabled, this defines the bucket width to bin likelihood differences into.")
     #group.add_argument("--", type=, default=, help="")
 
 def sampling_args(parser):

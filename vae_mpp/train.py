@@ -25,29 +25,35 @@ from vae_mpp.optim import get_optimizer, get_lr_scheduler
 from vae_mpp.arguments import get_args
 from vae_mpp.utils import kl_div, mmd_div, print_log
 
+def get_freer_gpu():
+    memory_available = [int(x.split()[2]) for x in os.popen('nvidia-smi -q -d Memory |grep -A4 GPU|grep Free').read().split("\n")[:-1]]
+    gpu_id = np.argmax(memory_available)
+    print_log("GPU {} Selected.".format(gpu_id))
+    return gpu_id
 
-def forward_pass(args, batch, model, sample_timestamps=None):
+def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, get_raw_likelihoods=False):
     if args.cuda:
         batch = {k:v.cuda(torch.cuda.current_device()) for k,v in batch.items()}
 
-    marks, timestamps, context_lengths, padding_mask \
-        = batch["marks"], batch["times"], batch["context_lengths"], batch["padding_mask"]
-    marks_backwards, timestamps_backwards = batch["marks_backwards"], batch["times_backwards"]
+    ref_marks, ref_timestamps, context_lengths, padding_mask \
+        = batch["ref_marks"], batch["ref_times"], batch["context_lengths"], batch["padding_mask"]
+    ref_marks_backwards, ref_timestamps_backwards = batch["ref_marks_backwards"], batch["ref_times_backwards"]
+    tgt_marks, tgt_timestamps = batch["tgt_marks"], batch["tgt_times"]
     pp_id = batch["pp_id"]
 
     T = batch["T"]  
 
     if sample_timestamps is None:
-        sample_timestamps = torch.rand(timestamps.shape[0], 150, dtype=timestamps.dtype, device=timestamps.device).clamp(min=1e-8) * T #torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
+        sample_timestamps = torch.rand(tgt_timestamps.shape[0], num_samples, dtype=tgt_timestamps.dtype, device=tgt_timestamps.device).clamp(min=1e-8) * T #torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
 
     # Forward Pass
     results = model(
-        ref_marks=marks, 
-        ref_timestamps=timestamps, 
-        ref_marks_bwd=marks_backwards,
-        ref_timestamps_bwd=timestamps_backwards,
-        tgt_marks=marks, 
-        tgt_timestamps=timestamps, 
+        ref_marks=ref_marks, 
+        ref_timestamps=ref_timestamps, 
+        ref_marks_bwd=ref_marks_backwards,
+        ref_timestamps_bwd=ref_timestamps_backwards,
+        tgt_marks=tgt_marks, 
+        tgt_timestamps=tgt_timestamps, 
         context_lengths=context_lengths,
         sample_timestamps=sample_timestamps,
         pp_id=pp_id,
@@ -59,7 +65,12 @@ def forward_pass(args, batch, model, sample_timestamps=None):
         right_window=T, 
         left_window=0.0, 
         mask=padding_mask,
+        reduce=not get_raw_likelihoods,
     )
+
+    if get_raw_likelihoods:
+        return ll_results, sample_timestamps, tgt_timestamps
+
     log_likelihood, ll_pos_contrib, ll_neg_contrib = \
         ll_results["log_likelihood"], ll_results["positive_contribution"], ll_results["negative_contribution"]
 
@@ -227,6 +238,7 @@ def setup_model_and_optim(args, epoch_len):
     )
 
     if args.cuda:
+        torch.cuda.set_device(int(get_freer_gpu()))
         model.cuda(torch.cuda.current_device())
 
     optimizer = get_optimizer(model, args)
@@ -235,7 +247,7 @@ def setup_model_and_optim(args, epoch_len):
     return model, optimizer, lr_scheduler
 
 def get_data(args):
-    train_dataset = PointPatternDataset(file_path=args.train_data_path)
+    train_dataset = PointPatternDataset(file_path=args.train_data_path, args=args)
     args.num_channels = train_dataset.vocab_size
 
     train_dataloader = DataLoader(
@@ -252,7 +264,7 @@ def get_data(args):
     print_log("Loaded {} / {} training examples / batches from {}".format(len(train_dataset), len(train_dataloader), args.train_data_path))
 
     if args.do_valid:
-        valid_dataset = PointPatternDataset(file_path=args.valid_data_path)
+        valid_dataset = PointPatternDataset(file_path=args.valid_data_path, args=args)
 
         valid_dataloader = DataLoader(
             dataset=valid_dataset,
@@ -280,7 +292,7 @@ def save_checkpoint(args, model, optimizer, lr_scheduler, epoch):
         if not os.path.exists(intermediate_path):
             os.mkdir(intermediate_path)
 
-    final_path = "{}/model_{}.pt".format(folder_path.rstrip("/"), epoch)
+    final_path = "{}/model_{:03d}.pt".format(folder_path.rstrip("/"), epoch)
     if os.path.exists(final_path):
         os.remove(final_path)
     torch.save(model.state_dict(), final_path)

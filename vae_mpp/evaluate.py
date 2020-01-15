@@ -105,13 +105,98 @@ def save_and_vis_intensities(args, model, dataloader):
                     dpi=150,
                     bbox_inches="tight")
 
+def filter_contributions(cont, times, T):
+    valid_times = times <= T
+    num_valid = valid_times.sum(-1)
+    partial_sum = torch.where(valid_times, cont, torch.zeros_like(cont)).sum(-1)
+    return partial_sum, num_valid
+
+def partial_pos_contributions_and_count(cont, times, T):
+    partial_sum, num_valid = filter_contributions(cont, times, T)
+    return partial_sum, num_valid
+
+def partial_neg_contributions(cont, times, T):
+    partial_sum, num_valid = filter_contributions(cont, times, T)
+    partial_sum = torch.where(num_valid == 0, partial_sum, torch.zeros_like(partial_sum))
+    num_valid = torch.where(num_valid == 0, num_valid, torch.zeros_like(num_valid) + 1)
+    return (partial_sum / num_valid * T)
+
+def add_contribution(total_contributions, new_conts, T, T_limits):
+    for new_cont_tensor, T_limit_tensor in zip(new_conts, T_limits):
+        new_cont, T_limit = new_cont_tensor.item(), T_limit_tensor.item()
+        if T <=T_limit:
+            if T in total_contributions:
+                total_contributions[T].append(new_cont)
+            else:
+                total_contributions[T] = [new_cont]
+
+def likelihood_over_time(args, model, dataloader):
+
+    lik_total_contributions = {}
+    pos_total_contributions = {}
+    neg_total_contributions = {}
+    overall_freq = {}
+    lik_diff_contributions = {}
+    pos_diff_contributions = {}
+    neg_diff_contributions = {}
+
+    all_contributions = {
+        "lik_total": lik_total_contributions, 
+        "pos_total": pos_total_contributions, 
+        "neg_total": neg_total_contributions, 
+        "lik_diff": lik_diff_contributions, 
+        "pos_diff": pos_diff_contributions, 
+        "neg_diff": neg_diff_contributions, 
+        "overall_freq": overall_freq,
+    }
+
+    res = args.likelihood_resolution
+    model.eval()
+
+    for i, batch in enumerate(dataloader):
+        if i % 20 == 0:
+            print_log("Progress: {} / {}".format(i, len(dataloader)))
+        with torch.no_grad():
+            ll_results, sample_timestamps, tgt_timestamps = forward_pass(args, batch, model, sample_timestamps=None, num_samples=1000, get_raw_likelihoods=True)
+            pos_cont, neg_cont = ll_results["positive_contribution"], ll_results["negative_contribution"]
+            #sample_timestamps, tgt_timestamps, pos_cont, neg_cont = sample_timestamps.squeeze(), tgt_timestamps.squeeze(), pos_cont.squeeze(), neg_cont.squeeze()
+            
+            prev_lik, prev_pos, prev_neg, prev_count = 0, 0, 0, 0
+            for T in np.arange(0, batch["T"].max().item() + res, res):
+                partial_pos_cont, new_count = partial_pos_contributions_and_count(pos_cont, tgt_timestamps, T)
+                partial_neg_cont = partial_neg_contributions(neg_cont, sample_timestamps, T)
+                partial_lik_cont = partial_pos_cont - partial_neg_cont
+                new_conts = {
+                    "lik_total": partial_lik_cont,
+                    "pos_total": partial_pos_cont,
+                    "neg_total": partial_neg_cont,
+                    "lik_diff": partial_lik_cont - prev_lik,
+                    "pos_diff": partial_pos_cont - prev_pos,
+                    "neg_diff": partial_neg_cont - prev_neg,
+                    "overall_freq": new_count - prev_count,
+                }
+                for key, new_cont in new_conts.items():
+                    add_contribution(all_contributions[key], new_cont, T, batch["T"])
+
+                prev_lik, prev_pos, prev_neg, prev_count = partial_lik_cont, partial_pos_cont, partial_neg_cont, new_count
+
+    mean_contributions = {}
+    for key, total_contributions in all_contributions.items():
+        mean_contributions[key] = sorted([(t,sum(ls) / len(ls)) for t,ls in total_contributions.items()])
+
+    pickle.dump(
+        {"raw": all_contributions, "mean": mean_contributions},
+        open("{}/likelihood_data.pickle".format(args.checkpoint_path.rstrip("/")), "wb"),
+    )
+
 def main():
     print_log("Getting arguments.")
     args = get_args()
 
-    args.batch_size = 1
+    if args.visualize:
+        args.batch_size = 1
     args.shuffle = False
-    args.train_data_path = [fp.replace("train", "vis") for fp in args.train_data_path]
+    args.train_data_path = [fp.replace("train", "vis" if args.visualize else "valid") for fp in args.train_data_path]
 
     print_log("Setting seed.")
     set_random_seed(args)
@@ -126,9 +211,12 @@ def main():
 
     load_checkpoint(args, model)
 
-    print_log("Starting visualization.")
-
-    save_and_vis_intensities(args, model, dataloader)
+    if args.visualize:
+        print_log("Starting visualization.")
+        save_and_vis_intensities(args, model, dataloader)
+    elif args.likelihood_over_time:
+        print_log("Starting likelihood over time analysis.")
+        likelihood_over_time(args, model, dataloader)
 
 if __name__ == "__main__":
     main()

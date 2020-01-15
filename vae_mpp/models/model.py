@@ -193,7 +193,7 @@ class PPModel(nn.Module):
         return return_dict
 
     @staticmethod
-    def log_likelihood(return_dict, right_window, left_window=0.0, mask=None):
+    def log_likelihood(return_dict, right_window, left_window=0.0, mask=None, reduce=True):
         """Computes per-batch log-likelihood from the results of a forward pass (that included a set of sample points). 
         
         Arguments:
@@ -215,15 +215,24 @@ class PPModel(nn.Module):
 
         # num_samples = return_dict["sample_intensities"]["log_intensity"].shape[1]
         log_mark_intensity = return_dict["tgt_intensities"]["log_mark_intensity"]
-        positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity)).sum(dim=-1)
-        negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["total_intensity"].mean(dim=-1)  # Summing and divided by number of samples
+        if reduce:
+            positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity)).sum(dim=-1)
+            negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["total_intensity"].mean(dim=-1)  # Summing and divided by number of samples
 
-        return {
-            "log_likelihood": ((1.0 * positive_samples) - negative_samples).mean(),
-            "positive_contribution": positive_samples.mean(),
-            "negative_contribution": negative_samples.mean(),
-        }
+            return {
+                "log_likelihood": ((1.0 * positive_samples) - negative_samples).mean(),
+                "positive_contribution": positive_samples.mean(),
+                "negative_contribution": negative_samples.mean(),
+            }
+        else:
+            positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity))
+            negative_samples = return_dict["sample_intensities"]["total_intensity"]  # Summing and divided by number of samples
 
+            return {
+                "positive_contribution": positive_samples,
+                "negative_contribution": negative_samples,
+            }
+        
             
     def get_param_groups(self):
         """Returns iterable of dictionaries specifying parameter groups.
