@@ -107,33 +107,46 @@ class TemporalEmbedding(nn.Module):
         embedding_dim {int} -- Size of the output embedding dimension
     """
 
-    def __init__(self, embedding_dim, use_raw_time=True, use_delta_time=False, learnable_delta_weights=True, max_period=10000.0):
+    def __init__(
+        self, 
+        embedding_dim, 
+        use_raw_time=True, 
+        use_delta_time=False, 
+        learnable_delta_weights=True, 
+        max_period=10000.0,
+    ):
         super().__init__()
 
         assert(use_raw_time or use_delta_time)
         num_components = 2 if use_raw_time and use_delta_time else 1
 
         if use_raw_time:
-            self.raw_time_embed = SinExpEmbedding(
-                embedding_dim=embedding_dim//num_components,
-                use_sinusoidal=True,
-                use_exponential=False,
-                sin_rand=False,
-                exp_rand=False,
-                max_period=max_period,
-            )
+            if embedding_dim == 1:
+                self.raw_time_embed = lambda x: x#.unsqueeze(-1)
+            else:
+                self.raw_time_embed = SinExpEmbedding(
+                    embedding_dim=embedding_dim//num_components,
+                    use_sinusoidal=True,
+                    use_exponential=False,
+                    sin_rand=False,
+                    exp_rand=False,
+                    max_period=max_period,
+                )
         else:
             self.raw_time_embed = None
 
         if use_delta_time:
-            self.delta_time_embed = SinExpEmbedding(
-                embedding_dim=embedding_dim//num_components,
-                use_sinusoidal=True,
-                use_exponential=True,
-                sin_rand=False,
-                exp_rand=True,
-                max_period=max_period,
-            )
+            if embedding_dim == 1:
+                self.delta_time_embed = lambda x: x#.unsqueeze(-1)
+            else:
+                self.delta_time_embed = SinExpEmbedding(
+                    embedding_dim=embedding_dim//num_components,
+                    use_sinusoidal=True,
+                    use_exponential=True,
+                    sin_rand=False,
+                    exp_rand=True,
+                    max_period=max_period,
+                )
         else:
             self.delta_time_embed = None
         
@@ -146,12 +159,20 @@ class TemporalEmbedding(nn.Module):
             true_times = t
 
         embeddings = []
-        if self.raw_time_embed:
+        if self.raw_time_embed is not None:
             embeddings.append(self.raw_time_embed(t.unsqueeze(-1)))
 
-        if self.delta_time_embed:
+        if self.delta_time_embed is not None:
             closest_dict = find_closest(sample_times=t, true_times=true_times)
             delta_t = t - closest_dict["closest_values"]
             embeddings.append(self.delta_time_embed(delta_t.unsqueeze(-1)))
 
-        return torch.cat(embeddings, dim=-1)
+        embeddings = torch.cat(embeddings, dim=-1)
+        #if torch.isnan(embeddings).any().item():
+        #    print("t: {}".format(t.tolist()))
+        #    print()
+        #    print("true_times: {}".format(true_times.tolist() if true_times is not None else true_times))
+        #    print()
+        #    print("delta_t: {}".format(delta_t.tolist()))
+        #    input()
+        return embeddings

@@ -3,6 +3,7 @@ import pickle
 import json
 import os
 import random
+import math
 
 from collections import defaultdict
 from parse import findall
@@ -51,6 +52,8 @@ class PointPatternDataset(Dataset):
         self,
         file_path,
         args,
+        keep_pct,
+        set_dominating_rate,
     ):
         """
         Loads text file containing realizations of point processes.
@@ -60,6 +63,9 @@ class PointPatternDataset(Dataset):
         As of writing this, "t" should be a floating point number, and "k" should be a non-negative integer.
         The max value of "k" seen in the dataset determines the vocabulary size.
         """
+        self.keep_pct = keep_pct
+        self.max_channels = args.num_channels
+
         if len(file_path) == 1 and os.path.isdir(file_path[0]):
             file_path = [file_path[0].rstrip("/") + "/" + fp for fp in os.listdir(file_path[0])]
             file_path = sorted(file_path)
@@ -68,6 +74,7 @@ class PointPatternDataset(Dataset):
         self.user_mapping = {}
         self.user_id = {}
         if isinstance(file_path, list):
+            self.is_valid = any(["valid" in fp for fp in file_path])
             self._instances = []
             self.vocab_size = 0
             for fp in file_path:
@@ -75,9 +82,25 @@ class PointPatternDataset(Dataset):
                 self._instances.extend(instances)
                 self.vocab_size = max(self.vocab_size, vocab_size)
         else:
+            self.is_valid = "valid" in file_path
             self._instances, self.vocab_size = self.read_instances(file_path)
 
         self.same_tgt_and_ref = args.same_tgt_and_ref
+
+        # find a dominating rate for the dataset for the purposes of sampling
+        if set_dominating_rate:
+            max_rate = 0
+            avg_rate = 0
+            for instance in self._instances:
+                avg_rate += len(instance["times"]) / instance["T"]
+                for i in range(3, len(instance["times"])):
+                    diff = (instance["times"][i] - instance["times"][i-3])
+                    if diff > 0:
+                        max_rate = max(max_rate, 4 / diff) 
+            avg_rate /= len(self._instances)
+            args.dominating_rate = 50 * avg_rate 
+
+            print("For Data Loaded, average rate {}, max rate {}, dominating rate {}".format(avg_rate, max_rate, args.dominating_rate))
 
     def __getitem__(self, idx):
         tgt_instance = self._instances[idx]
@@ -87,7 +110,10 @@ class PointPatternDataset(Dataset):
         if self.same_tgt_and_ref:
             ref_times, ref_marks = tgt_times, tgt_marks
         else:
-            ref_instance = self._instances[random.choice(self.user_mapping[tgt_instance["user"]])]
+            if self.is_valid:
+                ref_instance = self._instances[random.choice([ref_idx for ref_idx in self.user_mapping[tgt_instance["user"]] if ref_idx != idx])]
+            else:
+                ref_instance = self._instances[random.choice(self.user_mapping[tgt_instance["user"]])]
             ref_times, ref_marks = ref_instance["times"], ref_instance["marks"]
 
         item = {
@@ -106,6 +132,7 @@ class PointPatternDataset(Dataset):
             item["pp_id"] = torch.LongTensor([tgt_instance["pp_obj_id"]])
 
         if "user" in tgt_instance:
+            #print("USER", tgt_instance["user"])
             if tgt_instance["user"] not in self.user_id:
                 self.user_id[tgt_instance["user"]] = len(self.user_id)
             item["pp_id"] = torch.LongTensor([self.user_id[tgt_instance["user"]]])
@@ -145,12 +172,52 @@ class PointPatternDataset(Dataset):
                         "times": times,
                         "marks": marks
                     })
+        for i in range(len(instances)):
+            instance = instances[i]
+            keep_idx = [j for j,m in enumerate(instance["marks"]) if m < self.max_channels]
+            instance["times"] = [instance["times"][j] for j in keep_idx]
+            instance["marks"] = [instance["marks"][j] for j in keep_idx]
+        instances = [instance for instance in instances if len(instance["times"]) > 0]
+
         vocab_size = max(max(instance["marks"]) for instance in instances) + 1
+
+        if self.is_valid:
+            user_counts = {}
+            for instance in instances:
+                user = instance["user"]
+                if user in user_counts:
+                    user_counts[user] += 1
+                else:
+                    user_counts[user] = 1
+            user_counts = {k for k,v in user_counts.items() if v > 1}
+            instances = [instance for instance in instances if instance["user"] in user_counts]
+
+        if self.keep_pct < 1:
+            old_len = len(instances)
+            users = list(set(instance["user"] for instance in instances))
+            indices = list(range(len(users)))
+            random.shuffle(indices)
+            indices = sorted(indices[:math.floor(len(users) * self.keep_pct)])
+            users = set(users[idx] for idx in indices)
+            instances = [instance for instance in instances if instance['user'] in users]
+            print("Before filtering: {} | After filtering: {} | Prop: {} | Goal: {}".format(old_len, len(instances), len(instances) / old_len, self.keep_pct))
+
+        for i in range(len(instances)):
+            if instances[i]["times"][0] == 0.0:
+                instances[i]["times"][0] += 1e-8
+                assert((len(instances[i]["times"]) == 1) or (instances[i]["times"][0] < instances[i]["times"][1]))
 
         for i, item in enumerate(instances):
             if "user" in item and (item["user"] not in self.user_mapping):
                 self.user_mapping[item["user"]] = [i]
             elif "user" in item:
                 self.user_mapping[item["user"]].append(i)
+
+        med_len = sorted([len(item["times"]) for item in instances])[len(instances)//2]
+        avg_len = sum(len(item["times"]) for item in instances) / len(instances)
+        med_su = sorted([len(v) for k,v in self.user_mapping.items()])[len(self.user_mapping) // 2]
+        print("SEQS {} | USERS {} | Med S/U {} | Avg S/U {} | Med SEQ LEN {} | Avg SEQ LEN {}".format(
+            len(instances), len(self.user_mapping), med_su, len(instances)/len(self.user_mapping), med_len, avg_len,
+        ))
 
         return instances, vocab_size

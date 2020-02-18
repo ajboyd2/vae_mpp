@@ -202,3 +202,321 @@ class PPDecoder(nn.Module):
 
         #intensity_input = torch.cat(components, dim=-1)
         return self.intensity_net(*components)#intensity_input)
+
+class HawkesDecoder(nn.Module):
+    """Decoder module that transforms a set of marks, timestamps, and latent vector into intensity values for different channels."""
+
+    def __init__(
+        self,
+        channel_embedding,
+        time_embedding,
+        recurrent_hidden_size,
+        latent_size=None,
+        estimate_init_state=True,
+    ):
+        super().__init__()
+        if latent_size is None:
+            latent_size = 0
+        self.channel_embedding = channel_embedding
+        self.time_embedding = time_embedding
+        self.num_channels, self.channel_embedding_size = self.channel_embedding.weight.shape
+        self.latent_size = latent_size
+
+        self.recurrent_input_size = self.channel_embedding_size + recurrent_hidden_size + latent_size
+        self.recurrent_hidden_size = recurrent_hidden_size
+        self.cell_param_network = nn.Linear(self.recurrent_input_size, 7*recurrent_hidden_size, bias=True)
+        self.soft_plus_params = torch.nn.Parameter(torch.randn(self.num_channels,) * 0.0001)
+
+        self.hidden_to_intensity_logits = nn.Linear(recurrent_hidden_size, self.num_channels)
+
+        self.estimate_init_state = estimate_init_state
+        if self.estimate_init_state:
+            print("ESTIMATING INITIAL STATE")
+            self.init_hidden_state_network = nn.Sequential(
+                nn.Linear(latent_size, 6*recurrent_hidden_size),
+                #ACTIVATIONS["gelu"](),
+            )
+        else:
+            print("NOT ESTIMATING INITIAL STATE")
+            self.register_parameter(
+                name="init_hidden_state",
+                param=nn.Parameter(xavier_truncated_normal(size=(1, 6*recurrent_hidden_size), no_average=True))
+            )
+
+    def get_init_states(self, batch_size, latent_state=None):
+        if self.estimate_init_state:
+            init_states = self.init_hidden_state_network(latent_state)
+        else:
+            init_states = self.init_hidden_state.expand(batch_size, -1)
+        h_d, c_d, c_bar, c, delta, o = torch.chunk(init_states, 6, -1)
+        
+        return torch.tanh(h_d), torch.tanh(c_d), torch.tanh(c_bar), torch.tanh(c), F.softplus(delta), torch.sigmoid(o)
+
+    def recurrence(self, emb_event_t, h_d_tm1, c_tm1, c_bar_tm1):
+        feed = torch.cat((emb_event_t, h_d_tm1), dim=1)
+        # B * 2H
+        (gate_i,
+        gate_f,
+        gate_z,
+        gate_o,
+        gate_i_bar,
+        gate_f_bar,
+        gate_delta) = torch.chunk(self.cell_param_network(feed), 7, -1)
+
+        gate_i = torch.sigmoid(gate_i)
+        gate_f = torch.sigmoid(gate_f)
+        gate_z = torch.tanh(gate_z)
+        gate_o = torch.sigmoid(gate_o)
+        gate_i_bar = torch.sigmoid(gate_i_bar)
+        gate_f_bar = torch.sigmoid(gate_f_bar)
+        gate_delta = F.softplus(gate_delta)
+
+        c_t = gate_f * c_tm1 + gate_i * gate_z
+        c_bar_t = gate_f_bar * c_bar_tm1 + gate_i_bar * gate_z
+
+        return c_t, c_bar_t, gate_o, gate_delta
+
+    def decay(self, c_t, c_bar_t, o_t, delta_t, duration_t):
+        c_d_t = c_bar_t + (c_t - c_bar_t) * \
+            torch.exp(-delta_t * duration_t)
+
+        h_d_t = o_t * torch.tanh(c_d_t)
+
+        return c_d_t, h_d_t
+
+    def get_states(self, marks, timestamps, latent_state=None):
+        """Produce the set of hidden states from a given set of marks, timestamps, and latent vector that can then be used to calculate intensities.
+        
+        Arguments:
+            marks {torch.LongTensor} -- Tensor containing mark ids that correspond to channel embeddings.
+            timestamps {torch.FloatTensor} -- Tensor containing times of events that correspond to the marks.
+
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            torch.FloatTensor -- Corresponding hidden states that represent the history of the point process.
+        """
+
+        time_deltas = self.time_embedding(timestamps)
+        
+        components = []
+        components.append(self.channel_embedding(marks))
+
+        if latent_state is not None:
+             components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
+
+        recurrent_input = torch.cat(components, dim=-1)
+        assert(recurrent_input.shape[-1] == (self.recurrent_input_size - self.recurrent_hidden_size))
+        
+        h_d, c_d, c_bar, c, delta_t, o_t = self.get_init_states(time_deltas.shape[0], latent_state)
+        hidden_states = [torch.cat((h_d, o_t, c_bar, c, delta_t), -1)]
+        for i in range(time_deltas.shape[1]):
+            r_input, t_input = recurrent_input[:, i, :], time_deltas[:, i, :]
+            c, c_bar, o_t, delta_t = self.recurrence(r_input, h_d, c_d, c_bar)
+            c_d, h_d = self.decay(c, c_bar, o_t, delta_t, t_input)
+            hidden_states.append(torch.cat((h_d, o_t, c_bar, c, delta_t), -1))
+            
+        hidden_states = torch.stack(hidden_states, dim=1)
+        # print("hidden_states.shape: {}".format(hidden_states.shape))
+        return hidden_states
+
+    def get_intensity(self, state_values, state_times, timestamps, latent_state=None):
+        """Gennerate intensity values for a point process.
+        
+        Arguments:
+            state_values {torch.FloatTensor} -- Output hidden states from `get_states` call.
+            state_times {torch.FloatTensor} -- Corresponding timestamps used to generate state_values. These are the "true event times" to be compared against.
+            timestamps {torch.FloatTensor} -- Times to generate intensity values for.
+        
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            [type] -- [description]
+        """
+        closest_dict = find_closest(sample_times=timestamps, true_times=state_times)
+
+        padded_state_values = state_values #torch.cat((self.init_hidden_state[[-1], :, :].expand(state_values.shape[0], -1, -1), state_values), dim=1)  # To match dimensions from when closest values were found
+
+        selected_hidden_states = padded_state_values.gather(dim=1, index=closest_dict["closest_indices"].unsqueeze(-1).expand(-1, -1, padded_state_values.shape[-1]))
+        # print("selected_hidden_states.shape: {}".format(selected_hidden_states.shape))
+        time_embedding = self.time_embedding(timestamps, state_times)
+        # print("time_embedding.shape: {}".format(time_embedding.shape))
+        h_d, o_t, c_bar, c, delta_t = torch.chunk(selected_hidden_states, 5, -1)
+        # print("h_d.shape: {}".format(h_d.shape))
+        # print("o_t.shape: {}".format(o_t.shape))
+        # print("c_bar.shape: {}".format(c_bar.shape))
+        # print("c.shape: {}".format(c.shape))
+        # print("delta_t.shape: {}".format(delta_t.shape))
+
+        _, h_t = self.decay(c, c_bar, o_t, delta_t, time_embedding)
+        # print("h_t.shape: {}".format(h_t.shape))
+
+
+        intensity_values = F.softplus(self.hidden_to_intensity_logits(h_t))
+        all_log_mark_intensities = torch.log(intensity_values + 1e-12)
+        total_intensity = intensity_values.sum(dim=-1)
+        # print("intensity_values.shape: {}".format(intensity_values.shape))
+        # print("all_log_mark_intensities.shape: {}".format(all_log_mark_intensities.shape))
+        # print("total_intensity.shape: {}".format(total_intensity.shape))
+
+
+        return {
+            "all_log_mark_intensities": all_log_mark_intensities,
+            "total_intensity": total_intensity,
+        }
+
+        #components = [time_embedding, selected_hidden_states]
+        #if latent_state is not None:
+        #    components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
+
+        #intensity_input = torch.cat(components, dim=-1)
+        #return self.intensity_net(*components)#intensity_input)
+
+class RMTPPDecoder(nn.Module):
+    """Decoder module that transforms a set of marks, timestamps, and latent vector into intensity values for different channels."""
+
+    def __init__(
+        self,
+        channel_embedding,
+        time_embedding,
+        recurrent_hidden_size,
+        latent_size=None,
+        estimate_init_state=True,
+    ):
+        super().__init__()
+        if latent_size is None:
+            latent_size = 0
+        self.channel_embedding = channel_embedding
+        self.time_embedding = time_embedding
+        self.num_channels, self.channel_embedding_size = self.channel_embedding.weight.shape
+        self.latent_size = latent_size
+
+        self.recurrent_input_size = self.channel_embedding_size + latent_size + self.time_embedding.embedding_dim
+        self.recurrent_hidden_size = recurrent_hidden_size
+        self.recurrent_net = nn.LSTM(
+            input_size=self.recurrent_input_size, 
+            hidden_size=self.recurrent_hidden_size,
+            num_layers=1,
+            bidirectional=False,
+            batch_first=True,
+        )
+
+        self.hidden_to_intensity_logits = nn.Linear(recurrent_hidden_size, self.num_channels)
+        self.time_to_intensity_logits = nn.Linear(1, self.num_channels)
+        self.time_to_intensity_logits.weight.data = torch.rand_like(self.time_to_intensity_logits.weight.data)*0.001
+        self.time_to_intensity_logits.bias.data = torch.rand_like(self.time_to_intensity_logits.bias.data)*0.001
+
+        self.estimate_init_state = estimate_init_state
+        if self.estimate_init_state:
+            print("ESTIMATING INITIAL STATE")
+            self.init_hidden_state_network = nn.Sequential(
+                nn.Linear(latent_size, 2 * recurrent_hidden_size),
+                #ACTIVATIONS["gelu"](),
+            )
+        else:
+            print("NOT ESTIMATING INITIAL STATE")
+            self.register_parameter(
+                name="init_hidden_state",
+                param=nn.Parameter(xavier_truncated_normal(size=(1, 1, 2*recurrent_hidden_size), no_average=True))
+            )
+
+    def get_init_states(self, batch_size, latent_state=None):
+        if self.estimate_init_state:
+            init_states = self.init_hidden_state_network(latent_state).unsqueeze(0)
+        else:
+            init_states = self.init_hidden_state.expand(1, batch_size, -1)
+        h_0, c_0 = torch.chunk(init_states, 2, -1)
+        
+        return torch.tanh(h_0), torch.tanh(c_0)
+
+    def get_states(self, marks, timestamps, latent_state=None):
+        """Produce the set of hidden states from a given set of marks, timestamps, and latent vector that can then be used to calculate intensities.
+        
+        Arguments:
+            marks {torch.LongTensor} -- Tensor containing mark ids that correspond to channel embeddings.
+            timestamps {torch.FloatTensor} -- Tensor containing times of events that correspond to the marks.
+
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            torch.FloatTensor -- Corresponding hidden states that represent the history of the point process.
+        """
+
+        time_deltas = self.time_embedding(timestamps)
+        
+        components = []
+        components.append(self.channel_embedding(marks))
+        components.append(time_deltas)
+
+        if latent_state is not None:
+             components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
+
+        recurrent_input = torch.cat(components, dim=-1)
+        assert(recurrent_input.shape[-1] == (self.recurrent_input_size))
+        
+        init_state = self.get_init_states(time_deltas.shape[0], latent_state)
+
+        hidden_states = [init_state[0].squeeze(0).unsqueeze(1)]
+        output_hidden_states, (ohs, ocs) = self.recurrent_net(recurrent_input, init_state)
+        hidden_states.append(output_hidden_states)
+
+        #print(hidden_states[0].shape, init_state[0].shape, init_state[1].shape, output_hidden_states.shape, ohs.shape, ocs.shape)
+            
+        hidden_states = torch.cat(hidden_states, dim=1)
+        # print("hidden_states.shape: {}".format(hidden_states.shape))
+        return hidden_states
+
+    def get_intensity(self, state_values, state_times, timestamps, latent_state=None):
+        """Gennerate intensity values for a point process.
+        
+        Arguments:
+            state_values {torch.FloatTensor} -- Output hidden states from `get_states` call.
+            state_times {torch.FloatTensor} -- Corresponding timestamps used to generate state_values. These are the "true event times" to be compared against.
+            timestamps {torch.FloatTensor} -- Times to generate intensity values for.
+        
+        Keyword Arguments:
+            latent_state {torch.FloatTensor} -- Latent vector that [hopefully] summarizes relevant point process dynamics from a reference point pattern. (default: {None})
+        
+        Returns:
+            [type] -- [description]
+        """
+        closest_dict = find_closest(sample_times=timestamps, true_times=state_times)
+
+        padded_state_values = state_values #torch.cat((self.init_hidden_state[[-1], :, :].expand(state_values.shape[0], -1, -1), state_values), dim=1)  # To match dimensions from when closest values were found
+
+        selected_hidden_states = padded_state_values.gather(dim=1, index=closest_dict["closest_indices"].unsqueeze(-1).expand(-1, -1, padded_state_values.shape[-1]))
+        # print("selected_hidden_states.shape: {}".format(selected_hidden_states.shape))
+        time_embedding = self.time_embedding(timestamps, state_times)
+
+        hs_logits = self.hidden_to_intensity_logits(selected_hidden_states)
+        time_logits = self.time_to_intensity_logits(time_embedding)
+
+        all_log_mark_intensities = hs_logits + time_logits
+
+        #all_log_mark_intensities = torch.log(intensity_values + 1e-12)
+        intensity_values = torch.exp(all_log_mark_intensities)
+        total_intensity = intensity_values.sum(dim=-1)
+        #print("TE",time_embedding)
+        #print("TL", time_logits)
+        #print("ALMI", all_log_mark_intensities)
+        #print("IV",intensity_values)
+        #input()
+        # print("intensity_values.shape: {}".format(intensity_values.shape))
+        # print("all_log_mark_intensities.shape: {}".format(all_log_mark_intensities.shape))
+        # print("total_intensity.shape: {}".format(total_intensity.shape))
+
+
+        return {
+            "all_log_mark_intensities": all_log_mark_intensities,
+            "total_intensity": total_intensity,
+        }
+
+        #components = [time_embedding, selected_hidden_states]
+        #if latent_state is not None:
+        #    components.append(latent_state.unsqueeze(1).expand(latent_state.shape[0], timestamps.shape[1], latent_state.shape[1]))
+
+        #intensity_input = torch.cat(components, dim=-1)
+        #return self.intensity_net(*components)#intensity_input)

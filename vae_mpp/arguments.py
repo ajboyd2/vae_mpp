@@ -35,11 +35,18 @@ def model_config_args(parser):
     group.add_argument("--dropout", type=float, default=0.2, help="Dropout rate to be applied to all supported layers during training.")
     group.add_argument("--not_amortized", action="store_true", help="Selecting this will disable amortization.")
     group.add_argument("--same_tgt_and_ref", action="store_true", help="Not selecting will mix examples that are being encoded and decoded.")
+    group.add_argument("--use_hawkes", action="store_true", help="Uses a parametric Hawkes process.")
+    group.add_argument("--hawkes_bounded", action="store_true", help="Make Hawkes parameters non-negative.")
+    group.add_argument("--neural_hawkes", action="store_true", help="Makes decoder a Neural Hawkes Process.")
+    group.add_argument("--rmtpp", action="store_true", help="Makes decoder use the RMTPP architecture.")
+    group.add_argument("--s2s", action="store_true", help="Removes Variational part to the VAE setup.")
+    group.add_argument("--normal_dist", action="store_true", help="Enables distributions to be Normal. Laplacian otherwise.")
 
 def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
     group.add_argument("--checkpoint_path", type=str, default="./", help="Path to folder that contains model checkpoints. Will take the most recent one.")
     group.add_argument("--finetune", action="store_true", help="Will load in a model from the checkpoint path to finetune.")
+    group.add_argument("--train_data_percentage", type=float, default=1.0, help="Percentage (between 0 and 1) of training data to keep. Used for ablation studies with relation to amount of data.")
     group.add_argument("--train_epochs", type=int, default=40, help="Number of epochs to iterate over for training.")
     group.add_argument("--train_data_path", nargs="+", type=str, default=["./data/1_pp/training.pickle"], help="Path to training data file.")
     group.add_argument("--num_workers", type=int, default=0, help="Number of parallel workers for data loaders.")
@@ -57,12 +64,20 @@ def training_args(parser):
     group.add_argument("--warmup_pct", type=float, default=0.01, help="Percentage of 'train_iters' to be spent ramping learning rate up from 0.")
     group.add_argument("--lr_decay_style", type=str, default="cosine", help="Decay style for the learning rate, after the warmup period.")
     group.add_argument("--dont_shuffle", action="store_true", help="Don't shuffle training and validation dataloaders.")
+    group.add_argument("--early_stop", action="store_true", help="Does not predfine the number of epochs to run, but will instead stop when validation performance slows down or regresses.")
 
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
     group.add_argument("--valid_data_path", nargs="+", type=str, default=["./data/1_pp/validation.pickle"], help="Path to training data file.")
+    group.add_argument("--valid_epochs", type=int, default=5, help="Number of epochs to execute validation on.")
     group.add_argument("--classify_latents", action='store_true', help="On validation, train a logistic regression model on latent vectors to classify PP id and report results.")
     group.add_argument("--visualize", action="store_true", help="In evaluate.py selects the visualization script to run.")
+    group.add_argument("--sample_generations", action="store_true", help="In evaluate.py selects the generations script to run.")
+    group.add_argument("--num_samples", type=int, default=250, help="Number of sequences to generate samples from.")
+    group.add_argument("--samples_per_sequence", type=int, default=1, help="Number of samples to generate per sequence.")
+    group.add_argument("--get_latents", action="store_true", help="Loads a model and saves latent states from the encoder.")
+    group.add_argument("--top_k", type=int, default=0, help="Enables top_k sampling for marks.")
+    group.add_argument("--top_p", type=float, default=0.0, help="Enables top_p sampling for marks.")
     group.add_argument("--likelihood_over_time", action="store_true", help="In evaluate.py analyzes likelihood over time for a given model.")
     group.add_argument("--likelihood_resolution", type=float, default=1.0, help="When likelihood_over_time is enabled, this defines the bucket width to bin likelihood differences into.")
     #group.add_argument("--", type=, default=, help="")
@@ -96,6 +111,12 @@ def get_args():
     args.do_valid = args.valid_data_path != ""
     args.shuffle = not args.dont_shuffle
     args.amortized = not args.not_amortized
+    if args.s2s:
+        args.loss_beta = 0.0
+        args.loss_monotonic = None
+        args.loss_cyclical = None
+        args.loss_lambda = 0.0
+        args.agg_noise = False
 
     if not args.dont_print_args:
         print_args(vars(args))

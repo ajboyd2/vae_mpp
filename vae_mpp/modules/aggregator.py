@@ -34,7 +34,13 @@ class PPAggregator(nn.Module):
         extracted_states = self.method(hidden_states, context_lengths)
 
         #mu, log_var = self.mu_network(extracted_states), self.log_sigma_network(extracted_states)
-        mu, sigma = self.mu_network(extracted_states), self.sigma_network(extracted_states) #F.softplus(self.sigma_network(extracted_states))
+        mu = self.mu_network(extracted_states)
+        if not self.noise:
+            return {
+                "latent_state": mu,
+                "q_z_x": None,
+            }
+        sigma = self.sigma_network(extracted_states) #F.softplus(self.sigma_network(extracted_states))
         sigma = F.softmax(sigma, dim=-1) * sigma.shape[-1] + 1e-6
 
         q_z_x = self.q_z_x(mu, sigma)

@@ -44,7 +44,12 @@ def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, ge
     T = batch["T"]  
 
     if sample_timestamps is None:
-        sample_timestamps = torch.rand(tgt_timestamps.shape[0], num_samples, dtype=tgt_timestamps.dtype, device=tgt_timestamps.device).clamp(min=1e-8) * T #torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
+        sample_timestamps = torch.rand(
+            tgt_timestamps.shape[0], 
+            num_samples, 
+            dtype=tgt_timestamps.dtype, 
+            device=tgt_timestamps.device
+        ).clamp(min=1e-8) * T #torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
 
     # Forward Pass
     results = model(
@@ -59,6 +64,8 @@ def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, ge
         pp_id=pp_id,
     )
 
+    
+
     # Calculate losses
     ll_results = model.log_likelihood(
         return_dict=results, 
@@ -67,6 +74,7 @@ def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, ge
         mask=padding_mask,
         reduce=not get_raw_likelihoods,
     )
+
 
     if get_raw_likelihoods:
         return ll_results, sample_timestamps, tgt_timestamps
@@ -128,7 +136,6 @@ def train_epoch(args, model, optimizer, lr_scheduler, dataloader, epoch_number):
         batch_loss = train_step(args, model, optimizer, lr_scheduler, batch)
         for k, v in batch_loss.items():
             total_losses[k] += v.item()
-        
         if (i+1) % args.log_interval == 0:
             items_to_print = [("LR", lr_scheduler.get_lr())]
             items_to_print.extend([(k,v/args.log_interval) for k,v in total_losses.items()])
@@ -142,10 +149,12 @@ def train_epoch(args, model, optimizer, lr_scheduler, dataloader, epoch_number):
         items_to_print.extend([("beta", args.loss_beta), ("lambda", args.loss_lambda)])
         print_results(args, items_to_print, epoch_number, i+1, data_len, True)
 
-def eval_step(args, model, batch):
-    return forward_pass(args, batch, model)
+    return {k:v/data_len for k,v in total_losses.items()}
 
-def eval_epoch(args, model, valid_dataloader, train_dataloader, epoch_number):
+def eval_step(args, model, batch, num_samples=150):
+    return forward_pass(args, batch, model, num_samples=num_samples)
+
+def eval_epoch(args, model, valid_dataloader, train_dataloader, epoch_number, num_samples=150):
     model.eval()
 
     with torch.no_grad():
@@ -153,7 +162,7 @@ def eval_epoch(args, model, valid_dataloader, train_dataloader, epoch_number):
         data_len = len(valid_dataloader)
         valid_latents, valid_labels = [], []
         for i, batch in enumerate(valid_dataloader):
-            batch_loss, results = eval_step(args, model, batch)
+            batch_loss, results = eval_step(args, model, batch, num_samples)
             if args.classify_latents:
                 valid_latents.append(results["latent_state_dict"]["latent_state"])
                 valid_labels.append(batch["pp_id"])
@@ -195,6 +204,7 @@ def eval_epoch(args, model, valid_dataloader, train_dataloader, epoch_number):
             train_acc, valid_acc,
             naive_train_acc, naive_valid_acc,
         ))
+    return {k:v/data_len for k,v in total_losses.items()}
         
 def print_results(args, items, epoch_number, iteration, data_len, training=True):
     msg = "[{}] Epoch {}/{} | Iter {}/{} | ".format("T" if training else "V", epoch_number, args.train_epochs, iteration, data_len)
@@ -235,10 +245,15 @@ def setup_model_and_optim(args, epoch_len):
         dec_act_func=args.dec_act_func,
         dropout=args.dropout,
         amortized=args.amortized,
+        hawkes=args.use_hawkes,
+        hawkes_bounded=args.hawkes_bounded,
+        neural_hawkes=args.neural_hawkes,
+        rmtpp=args.rmtpp,
+        normal_dist=args.normal_dist,
     )
 
     if args.cuda:
-        torch.cuda.set_device(int(get_freer_gpu()))
+        torch.cuda.set_device(0)#int(get_freer_gpu()))
         model.cuda(torch.cuda.current_device())
 
     optimizer = get_optimizer(model, args)
@@ -247,7 +262,7 @@ def setup_model_and_optim(args, epoch_len):
     return model, optimizer, lr_scheduler
 
 def get_data(args):
-    train_dataset = PointPatternDataset(file_path=args.train_data_path, args=args)
+    train_dataset = PointPatternDataset(file_path=args.train_data_path, args=args, keep_pct=args.train_data_percentage, set_dominating_rate=args.sample_generations)
     args.num_channels = train_dataset.vocab_size
 
     train_dataloader = DataLoader(
@@ -264,7 +279,7 @@ def get_data(args):
     print_log("Loaded {} / {} training examples / batches from {}".format(len(train_dataset), len(train_dataloader), args.train_data_path))
 
     if args.do_valid:
-        valid_dataset = PointPatternDataset(file_path=args.valid_data_path, args=args)
+        valid_dataset = PointPatternDataset(file_path=args.valid_data_path, args=args, keep_pct=1.0, set_dominating_rate=False)
 
         valid_dataloader = DataLoader(
             dataset=valid_dataset,
@@ -300,11 +315,20 @@ def save_checkpoint(args, model, optimizer, lr_scheduler, epoch):
 
 def load_checkpoint(args, model):
     folder_path = args.checkpoint_path
+    if not os.path.exists(folder_path):
+        return 0
     files = [f for f in os.listdir(folder_path) if ".pt" in f]
-    file_path = "{}/{}".format(folder_path.rstrip("/"), sorted(files)[-1])
-
-    model.load_state_dict(torch.load(file_path))
+    if len(files) == 0:
+        return 0
+    latest_model = sorted(files)[-1]
+    file_path = "{}/{}".format(folder_path.rstrip("/"), latest_model)
+    if not os.path.exists(file_path):
+        return 0
+    model.load_state_dict(torch.load(file_path, map_location=lambda storage, loc: storage))
+    if args.cuda:
+        model.cuda(torch.cuda.current_device())
     print_log("Loaded model from {}".format(file_path))
+    return int(latest_model.replace("model_", "").replace(".pt", "")) + 1
 
 def report_model_stats(model):
     encoder_parameter_count = 0
@@ -328,10 +352,7 @@ def report_model_stats(model):
     print_log("---Total.......{}".format(total))
     print_log()
 
-def main():
-    print_log("Getting arguments.")
-    args = get_args()
-
+def main(args):
     print_log("Setting seed.")
     set_random_seed(args)
 
@@ -344,21 +365,58 @@ def main():
     report_model_stats(model)
 
     if args.finetune:
-        load_checkpoint(args, model)
+        epoch = load_checkpoint(args, model)
+    else:
+        epoch = 0
+    original_epoch = epoch
 
     print_log("Starting training.")
+    results = {"valid": [], "train": []}
+    last_valid_ll = -float('inf')
+    epsilon = 0.4
 
-    if args.do_valid:
-        eval_epoch(args, model, valid_dataloader, train_dataloader, 0)
+    while epoch < args.train_epochs or args.early_stop:
+        results["train"].append(train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1))
 
-    for epoch in range(args.train_epochs):
-        train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1)
+        if args.do_valid and ((epoch+1) % args.valid_epochs == 0):
+            new_valid = eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1)
+            results["valid"].append(new_valid)
+            if args.early_stop:
+                if new_valid["log_likelihood"] - last_valid_ll < epsilon:
+                    break
+            last_valid_ll = new_valid["log_likelihood"]
 
-        if (epoch % args.save_epochs == 0) or (epoch == (args.train_epochs-1)):
+
+        if ((epoch+1) % args.save_epochs == 0):
             save_checkpoint(args, model, optimizer, lr_scheduler, epoch)
         
-        if args.do_valid:
-            eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1)
+        epoch += 1
+        
+    if args.save_epochs > 0 and original_epoch != epoch:
+        save_checkpoint(args, model, optimizer, lr_scheduler, epoch)
+
+    if args.do_valid:
+        overall_valid_results = {}
+        reps = 5    
+        for _ in range(reps):
+            valid_results = eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1, num_samples=500)
+            for k,v in valid_results.items():
+                if k not in overall_valid_results:
+                    overall_valid_results[k] = v / reps
+                else:
+                    overall_valid_results[k] += v / reps
+        results["valid"].append(overall_valid_results)
+    
+    del model
+    del optimizer
+    del lr_scheduler
+    del train_dataloader
+    del valid_dataloader
+    torch.cuda.empty_cache()
+
+    return results
 
 if __name__ == "__main__":
-    main()
+    print_log("Getting arguments.")
+    args = get_args()
+    main(args)

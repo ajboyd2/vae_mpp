@@ -1,7 +1,8 @@
 import torch
 
-from vae_mpp.modules import PPDecoder, PPEncoder,PPAggregator, TemporalEmbedding
+from vae_mpp.modules import PPDecoder, HawkesDecoder, RMTPPDecoder, PPEncoder, PPAggregator, TemporalEmbedding
 from vae_mpp.models.model import PPModel
+from vae_mpp.models.hawkes import HawkesModel
 
 def get_model(
     time_embedding_size, 
@@ -26,7 +27,23 @@ def get_model(
     dec_act_func="gelu",
     dropout=0.2,
     amortized=True,
+    hawkes=False,
+    hawkes_bounded=True,
+    neural_hawkes=False,
+    rmtpp=False,
+    normal_dist=False,
 ):
+    if normal_dist:
+        dist = torch.distributions.Normal
+    else:
+        dist = torch.distributions.Laplace
+    print("USING DISTRIBUTION: {}".format(dist))
+
+    if hawkes:
+        return HawkesModel(
+            num_marks=num_channels,
+            bounded=hawkes_bounded,
+        )
 
     time_embedding = TemporalEmbedding(
         embedding_dim=time_embedding_size,
@@ -56,33 +73,63 @@ def get_model(
             hidden_size=enc_hidden_size,
             latent_size=latent_size,
             noise=agg_noise,
-            q_z_x=torch.distributions.Laplace,
-
+            q_z_x=dist, #torch.distributions.Laplace,
         )
     else:
         encoder = None
         aggregator = None
 
-    decoder = PPDecoder(
-        channel_embedding=channel_embedding,
-        time_embedding=time_embedding,
-        act_func=dec_act_func,
-        num_intensity_layers=dec_num_intensity_layers,
-        intensity_hidden_size=dec_intensity_hidden_size,
-        num_recurrent_layers=dec_num_recurrent_layers,
-        recurrent_hidden_size=dec_recurrent_hidden_size,
-        dropout=dropout,
-        latent_size=latent_size if use_encoder else 0,
-        factored_heads=dec_intensity_factored_heads,
-        use_embedding_weights=dec_intensity_use_embeddings,
-        estimate_init_state=use_encoder,
-    )
+    if neural_hawkes:
+        print("USING NEURAL HAWKES")
+        decoder = HawkesDecoder(
+            channel_embedding=channel_embedding,
+            time_embedding=TemporalEmbedding(
+                embedding_dim=1,
+                use_raw_time=False,
+                use_delta_time=True,
+                learnable_delta_weights=False,
+                max_period=0,
+            ),
+            recurrent_hidden_size=dec_recurrent_hidden_size,
+            latent_size=latent_size if use_encoder else 0,
+            estimate_init_state=use_encoder,
+        )
+    elif rmtpp:
+        print("USING RMTPP")
+        decoder = RMTPPDecoder(
+            channel_embedding=channel_embedding,
+            time_embedding=TemporalEmbedding(
+                embedding_dim=1,
+                use_raw_time=False,
+                use_delta_time=True,
+                learnable_delta_weights=False,
+                max_period=0,
+            ),
+            recurrent_hidden_size=dec_recurrent_hidden_size,
+            latent_size=latent_size if use_encoder else 0,
+            estimate_init_state=use_encoder,
+        )
+    else:
+        decoder = PPDecoder(
+            channel_embedding=channel_embedding,
+            time_embedding=time_embedding,
+            act_func=dec_act_func,
+            num_intensity_layers=dec_num_intensity_layers,
+            intensity_hidden_size=dec_intensity_hidden_size,
+            num_recurrent_layers=dec_num_recurrent_layers,
+            recurrent_hidden_size=dec_recurrent_hidden_size,
+            dropout=dropout,
+            latent_size=latent_size if use_encoder else 0,
+            factored_heads=dec_intensity_factored_heads,
+            use_embedding_weights=dec_intensity_use_embeddings,
+            estimate_init_state=use_encoder,
+        )
 
     return PPModel(
         decoder=decoder,
         encoder=encoder,
         aggregator=aggregator,
         amortized=amortized,
-        q_z_x=aggregator.q_z_x if aggregator is not None else torch.distributions.Laplace,
-        p_z=torch.distributions.Laplace,
+        q_z_x=aggregator.q_z_x if aggregator is not None else dist, # torch.distributions.Laplace,
+        p_z=dist, #torch.distributions.Laplace,
     )

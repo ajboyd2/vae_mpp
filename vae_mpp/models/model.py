@@ -15,6 +15,39 @@ NORMS = (
     #nn.SyncBatchNorm,
 )
 
+def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
+    """ Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
+        Adapted from https://gist.github.com/thomwolf/1a5a29f6962089e871b94cbd09daf317
+
+        Args:
+            logits: logits distribution shape (vocabulary size)
+            top_k >0: keep only top k tokens with highest probability (top-k filtering).
+            top_p >0.0: keep the top tokens with cumulative probability >= top_p (nucleus filtering).
+                Nucleus filtering is described in Holtzman et al. (http://arxiv.org/abs/1904.09751)
+    """
+    logits = logits.squeeze()
+    assert logits.dim() == 1  # batch size 1 for now - could be updated for more but the code would be less clear
+    top_k = min(top_k, logits.size(-1))  # Safety check
+    if top_k > 0:
+        # Remove all tokens with a probability less than the last token of the top-k
+        indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+        logits[indices_to_remove] = filter_value
+
+    if top_p > 0.0:
+        sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+        # Remove tokens with cumulative probability above the threshold
+        sorted_indices_to_remove = cumulative_probs > top_p
+        # Shift the indices to the right to keep also the first token above the threshold
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = 0
+
+        indices_to_remove = sorted_indices[sorted_indices_to_remove]
+        logits[indices_to_remove] = filter_value
+    return logits.unsqueeze(0).unsqueeze(0)
+
+
 class PPModel(nn.Module):
 
     def __init__(
@@ -48,12 +81,13 @@ class PPModel(nn.Module):
             #self.latent_log_var = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
             self.latent_sigma = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
         
-        self.p_z = p_z
-        self.q_z_x = q_z_x
-        self._p_z_params = nn.ParameterList([
-            nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False),  # mu
-            nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False)  # logvar
-        ])
+        if decoder is not None:
+            self.p_z = p_z
+            self.q_z_x = q_z_x
+            self._p_z_params = nn.ParameterList([
+                nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False),  # mu
+                nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False)  # logvar
+            ])
 
     def get_prior_params(self):
         return self._p_z_params[0], F.softmax(self._p_z_params[1], dim=-1) * self._p_z_params[1].size(-1)
@@ -231,9 +265,68 @@ class PPModel(nn.Module):
             return {
                 "positive_contribution": positive_samples,
                 "negative_contribution": negative_samples,
+                "cross_entropy": -(positive_samples - return_dict["tgt_intensities"]["total_intensity"].log()),
             }
         
-            
+    def sample_points(self, ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths, dominating_rate, T, left_window, top_k=0, top_p=0.0):
+        state = self.forward(ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths)
+        state_values, state_times, latent_state = state["state_dict"]["state_values"], state["state_dict"]["state_times"], state["latent_state"]
+        
+        dist = torch.distributions.Exponential(dominating_rate)
+        last_time = left_window #torch.where(tgt_timestamps < 10000, tgt_timestamps, torch.zeros_like(tgt_timestamps)).max()  # assuming that batch size is 1
+        new_time = last_time + dist.sample(sample_shape=torch.Size((1,1))).to(torch.cuda.current_device())
+        sampled_times = []
+        sampled_marks = []
+        while new_time < T:
+            sample_intensities = self.get_intensity(
+                state_values=state_values,
+                state_times=state_times,
+                timestamps=new_time,
+                latent_state=latent_state,
+                marks=None,
+            )
+
+            if torch.rand_like(new_time) <= (sample_intensities["total_intensity"] / (dominating_rate)):
+                if top_k > 0 or top_p > 0:
+                    logits = top_k_top_p_filtering(sample_intensities["all_log_mark_intensities"], top_k=top_k, top_p=top_p)
+                else:
+                    logits = sample_intensities["all_log_mark_intensities"]
+                mark_probs = F.softmax(logits, -1) #(sample_intensities["all_log_mark_intensities"] - sample_intensities["total_intensity"].unsqueeze(-1).log()).exp()
+                mark_dist = torch.distributions.Categorical(mark_probs)
+                new_mark = mark_dist.sample()
+                tgt_timestamps = torch.cat((tgt_timestamps, new_time), -1)
+                tgt_marks = torch.cat((tgt_marks, new_mark), -1)
+                sampled_times.append(new_time.squeeze().item())
+                sampled_marks.append(new_mark.squeeze().item())
+
+                state = self.forward(ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths)
+                state_values, state_times, latent_state = state["state_dict"]["state_values"], state["state_dict"]["state_times"], state["latent_state"]
+        
+            new_time = new_time + dist.sample(sample_shape=torch.Size((1,1))).to(torch.cuda.current_device())
+
+        assumption_violation = False
+        for _ in range(5):
+            eval_times = torch.rand_like(tgt_timestamps).clamp(min=1e-8)*T
+            sample_intensities = self.get_intensity(
+                state_values=state_values,
+                state_times=state_times,
+                timestamps=eval_times,
+                latent_state=latent_state,
+                marks=None,
+            )
+            if (sample_intensities["total_intensity"] > dominating_rate).any().item():
+                print("DR: {}".format(dominating_rate))
+                print("IN: {}".format(sample_intensities["total_intensity"].max().item()))
+                #print("TS: {}".format(eval_times.squeeze().tolist()))
+                assumption_violation = True
+                break
+
+        if assumption_violation:
+            print("Violation in sampling assumption occurred. Redoing sample.")
+            return None # self.sample_points(ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths, dominating_rate * 2, T)
+        else:
+            return sampled_times, sampled_marks
+
     def get_param_groups(self):
         """Returns iterable of dictionaries specifying parameter groups.
         The first dictionary in the return value contains parameters that will be subject to weight decay.
