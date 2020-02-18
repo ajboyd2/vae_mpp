@@ -25,11 +25,6 @@ from vae_mpp.optim import get_optimizer, get_lr_scheduler
 from vae_mpp.arguments import get_args
 from vae_mpp.utils import kl_div, mmd_div, print_log
 
-def get_freer_gpu():
-    memory_available = [int(x.split()[2]) for x in os.popen('nvidia-smi -q -d Memory |grep -A4 GPU|grep Free').read().split("\n")[:-1]]
-    gpu_id = np.argmax(memory_available)
-    print_log("GPU {} Selected.".format(gpu_id))
-    return gpu_id
 
 def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, get_raw_likelihoods=False):
     if args.cuda:
@@ -49,7 +44,7 @@ def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, ge
             num_samples, 
             dtype=tgt_timestamps.dtype, 
             device=tgt_timestamps.device
-        ).clamp(min=1e-8) * T #torch.rand_like(timestamps).clamp(min=1e-8) * T # ~ U(0, T)
+        ).clamp(min=1e-8) * T # ~ U(0, T)
 
     # Forward Pass
     results = model(
@@ -83,17 +78,12 @@ def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, ge
         ll_results["log_likelihood"], ll_results["positive_contribution"], ll_results["negative_contribution"]
 
     if args.agg_noise and args.use_encoder:
-        #kl_term = kl_div(results["latent_state_dict"]["mu"], results["latent_state_dict"]["log_var"])
         kl_term = kl_div(results["q_z_x"], results["p_z"]).mean()
-        #mmd_term = mmd_div(results["latent_state_dict"]["latent_state"])
     else:
-        #kl_term, mmd_term = torch.zeros_like(log_likelihood), torch.zeros_like(log_likelihood)
         kl_term = torch.zeros_like(log_likelihood)
 
     objective = log_likelihood - (args.loss_beta * kl_term) #- (args.loss_lambda * mmd_term)
     loss = -1 * objective  # minimize loss, maximize objective
-
-    #print_log("Beta: {:.4f} | Lambda: {:.4f}".format(args.loss_beta, args.loss_lambda))
 
     return {
         "loss": loss,
@@ -101,7 +91,6 @@ def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, ge
         "ll_pos": ll_pos_contrib,
         "ll_neg": ll_neg_contrib,
         "kl_divergence": kl_term,
-        #"mmd_divergence": mmd_term,
     }, results
 
 def backward_pass(args, loss, model, optimizer):
@@ -253,7 +242,7 @@ def setup_model_and_optim(args, epoch_len):
     )
 
     if args.cuda:
-        torch.cuda.set_device(0)#int(get_freer_gpu()))
+        torch.cuda.set_device(0)
         model.cuda(torch.cuda.current_device())
 
     optimizer = get_optimizer(model, args)

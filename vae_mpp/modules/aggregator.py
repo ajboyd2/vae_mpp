@@ -20,7 +20,6 @@ class PPAggregator(nn.Module):
             raise ValueError
 
         self.mu_network = nn.Linear(hidden_size, latent_size)
-        #self.log_sigma_network = nn.Linear(hidden_size, latent_size)
         self.sigma_network = nn.Linear(hidden_size, latent_size)
         self.q_z_x = q_z_x
 
@@ -33,7 +32,6 @@ class PPAggregator(nn.Module):
     def forward(self, hidden_states, context_lengths, sample_override=False):
         extracted_states = self.method(hidden_states, context_lengths)
 
-        #mu, log_var = self.mu_network(extracted_states), self.log_sigma_network(extracted_states)
         mu = self.mu_network(extracted_states)
         if not self.noise:
             return {
@@ -46,8 +44,6 @@ class PPAggregator(nn.Module):
         q_z_x = self.q_z_x(mu, sigma)
 
         if self.training or sample_override:
-            #latent_state = torch.randn_like(mu) * torch.exp(log_var / 2.0) + mu
-            #latent_state = torch.randn_like(mu) * sigma + mu
             latent_state = q_z_x.rsample()
         else:
             latent_state = mu

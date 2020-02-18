@@ -12,7 +12,6 @@ NORMS = (
     nn.InstanceNorm2d,
     nn.InstanceNorm3d,
     nn.LocalResponseNorm,
-    #nn.SyncBatchNorm,
 )
 
 def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
@@ -78,7 +77,6 @@ class PPModel(nn.Module):
         self.amortized = amortized
         if not amortized:
             self.latent_mu = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
-            #self.latent_log_var = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
             self.latent_sigma = nn.Embedding(num_embeddings=100, embedding_dim=decoder.latent_size)
         
         if decoder is not None:
@@ -118,8 +116,6 @@ class PPModel(nn.Module):
         )
 
         if marks is not None:
-            #gathered_probs = intensity_dict["log_mark_probs"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1)
-            #intensity_dict["log_mark_intensity"] = gathered_probs + intensity_dict["log_intensity"]
             intensity_dict["log_mark_intensity"] = intensity_dict["all_log_mark_intensities"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1)
         
         return intensity_dict 
@@ -136,14 +132,11 @@ class PPModel(nn.Module):
 
             return self.aggregator(hidden_states, context_lengths)
         else:
-            #mu, log_var = self.latent_mu(pp_id), self.latent_log_var(pp_id)
-            #mu, log_var = mu.squeeze(dim=1), log_var.squeeze(dim=1)
             raise NotImplementedError
             mu, sigma = self.latent_mu(pp_id), self.latent_sigma(pp_id)
             mu, sigma = mu.squeeze(dim=1), sigma.squeeze(dim=1)
 
             if self.training:
-                #latent_state = torch.randn_like(mu) * torch.exp(log_var / 2.0) + mu
                 latent_state = torch.randn_like(mu) * sigma + mu
             else:
                 latent_state = mu
@@ -247,7 +240,6 @@ class PPModel(nn.Module):
         else:
             assert(all(x == y for x,y in zip(return_dict["tgt_intensities"]["log_mark_intensity"].shape, mask.shape)))  # make sure they are same size
 
-        # num_samples = return_dict["sample_intensities"]["log_intensity"].shape[1]
         log_mark_intensity = return_dict["tgt_intensities"]["log_mark_intensity"]
         if reduce:
             positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity)).sum(dim=-1)
@@ -273,7 +265,7 @@ class PPModel(nn.Module):
         state_values, state_times, latent_state = state["state_dict"]["state_values"], state["state_dict"]["state_times"], state["latent_state"]
         
         dist = torch.distributions.Exponential(dominating_rate)
-        last_time = left_window #torch.where(tgt_timestamps < 10000, tgt_timestamps, torch.zeros_like(tgt_timestamps)).max()  # assuming that batch size is 1
+        last_time = left_window 
         new_time = last_time + dist.sample(sample_shape=torch.Size((1,1))).to(torch.cuda.current_device())
         sampled_times = []
         sampled_marks = []
@@ -317,7 +309,6 @@ class PPModel(nn.Module):
             if (sample_intensities["total_intensity"] > dominating_rate).any().item():
                 print("DR: {}".format(dominating_rate))
                 print("IN: {}".format(sample_intensities["total_intensity"].max().item()))
-                #print("TS: {}".format(eval_times.squeeze().tolist()))
                 assumption_violation = True
                 break
 

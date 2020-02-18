@@ -168,11 +168,4 @@ class TemporalEmbedding(nn.Module):
             embeddings.append(self.delta_time_embed(delta_t.unsqueeze(-1)))
 
         embeddings = torch.cat(embeddings, dim=-1)
-        #if torch.isnan(embeddings).any().item():
-        #    print("t: {}".format(t.tolist()))
-        #    print()
-        #    print("true_times: {}".format(true_times.tolist() if true_times is not None else true_times))
-        #    print()
-        #    print("delta_t: {}".format(delta_t.tolist()))
-        #    input()
         return embeddings

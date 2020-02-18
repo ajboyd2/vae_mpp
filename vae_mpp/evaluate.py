@@ -23,19 +23,7 @@ def save_and_vis_intensities(args, model, dataloader):
         if args.cuda:
             batch = {k:v.cuda(torch.cuda.current_device()) for k,v in batch.items()}
         T = batch["T"][0].item()
-        '''
-        if "pp_id" in batch:
-            pp_obj_idx = batch["pp_id"][0].item()
-            if pp_objs is None:
-                _pp_objs = pickle.load(open("/mnt/c/Users/Alex/Research/vae_mpp/data/15_pps/interesting_pp_objs_dicts.pickle", "rb"))
-                pp_objs = []
-                for _pp in _pp_objs:
-                    pp = SelfExcitingProcess(3)
-                    pp.mu = _pp["mu"]
-                    pp.alpha = _pp["alpha"]
-                    pp.delta = _pp["delta"]
-                    pp_objs.append(pp)
-        '''
+
         all_times = torch.linspace(0, T, 500, dtype=torch.float, device=batch["T"].device).unsqueeze(0) + 1e-8
 
         def to_cpu(obj):
@@ -67,8 +55,6 @@ def save_and_vis_intensities(args, model, dataloader):
 
         for k in range(model_intensities.shape[1]):
             ax_top.plot(all_times, model_intensities[:, k], color=colors[k], label="Model - k={}".format(k))
-
-        #ax_top.plot(all_times, total_intensity, linestyle="dashed", color="black", label="Model - Total")
 
         actual_times = batch["tgt_times"].squeeze().tolist()
         actual_marks = batch["tgt_marks"].squeeze().tolist()
@@ -148,11 +134,6 @@ def likelihood_over_time(args, model, dataloader):
         "pos_total": pos_total_contributions, 
         "neg_total": neg_total_contributions, 
         "ce_total": ce_total_contributions,
-        # "lik_diff": lik_diff_contributions, 
-        # "pos_diff": pos_diff_contributions, 
-        # "neg_diff": neg_diff_contributions,
-        # "ce_diff": ce_diff_contributions, 
-        # "overall_freq": overall_freq,
     }
 
     res = args.likelihood_resolution 
@@ -164,8 +145,6 @@ def likelihood_over_time(args, model, dataloader):
         with torch.no_grad():
             ll_results, sample_timestamps, tgt_timestamps = forward_pass(args, batch, model, sample_timestamps=None, num_samples=1000, get_raw_likelihoods=True)
             pos_cont, neg_cont, ce = ll_results["positive_contribution"], ll_results["negative_contribution"], ll_results["cross_entropy"]
-
-            #sample_timestamps, tgt_timestamps, pos_cont, neg_cont = sample_timestamps.squeeze(), tgt_timestamps.squeeze(), pos_cont.squeeze(), neg_cont.squeeze()
             
             prev_lik, prev_pos, prev_neg, prev_count, prev_ce = 0, 0, 0, 0, 0
             for T in np.arange(res, batch["T"].max().item() + res, res):
@@ -178,16 +157,10 @@ def likelihood_over_time(args, model, dataloader):
                     "pos_total": partial_ce_mean + partial_pos_mean,
                     "neg_total": partial_neg_mean,
                     "ce_total":  partial_ce_mean,
-                    # "lik_diff": partial_lik_cont - prev_lik,
-                    # "pos_diff": partial_pos_cont - prev_pos,
-                    # "neg_diff": partial_neg_cont - prev_neg,
-                    # "ce_diff": partial_ce_cont - prev_ce,
-                    #"overall_freq": new_count - prev_count,
                 }
                 for key, new_cont in new_conts.items():
                     add_contribution(all_contributions[key], new_cont, T, batch["T"])
 
-                #prev_lik, prev_pos, prev_neg, prev_count, prev_ce = partial_lik_cont, partial_pos_cont, partial_neg_cont, new_count, partial_ce_cont
 
     mean_contributions = {}
     lower_ci_contributions = {}
@@ -195,21 +168,13 @@ def likelihood_over_time(args, model, dataloader):
     for key, total_contributions in all_contributions.items():
         if "ce_" in key:
             mean_contributions[key] = sorted([(t,sum(ls) / sum(1 for x in ls if (x != 0) and (x != 0.0))) for t,ls in total_contributions.items()])
-#            lower_ci_contributions[key] = sorted([(t,sorted([x for x in ls if (x != 0) and (x != 0.0)])[int((len([x for x in ls if (x != 0) and (x != 0.0)])*2.5)//100)]) for t,ls in total_contributions.items()])
-#            upper_ci_contributions[key] = sorted([(t,sorted([x for x in ls if (x != 0) and (x != 0.0)])[int((len([x for x in ls if (x != 0) and (x != 0.0)])*97.5)//100)]) for t,ls in total_contributions.items()])
         elif "pos_" in key:
             mean_contributions[key] = sorted([(t,sum(ls) / sum(1 for x in all_contributions["ce_total"][t] if (x != 0) and (x != 0.0))) for t,ls in total_contributions.items()])
-#            lower_ci_contributions[key] = sorted([(t,sorted([x for x in ls if (x != 0) and (x != 0.0)])[int((len([x for x in ls if (x != 0) and (x != 0.0)])*2.5)//100)]) for t,ls in total_contributions.items()])
-#            upper_ci_contributions[key] = sorted([(t,sorted([x for x in ls if (x != 0) and (x != 0.0)])[int((len([x for x in ls if (x != 0) and (x != 0.0)])*97.5)//100)]) for t,ls in total_contributions.items()])
         else:
             mean_contributions[key] = sorted([(t,sum(ls) / len(ls)) for t,ls in total_contributions.items()])
-#            lower_ci_contributions[key] = sorted([(t,sorted(ls)[int((len(ls)*2.5)//100)]) for t,ls in total_contributions.items()])
-#            upper_ci_contributions[key] = sorted([(t,sorted(ls)[int((len(ls)*97.5)//100)]) for t,ls in total_contributions.items()])
 
     pickle.dump(
-        #{"raw": all_contributions, "mean": mean_contributions},
         {"mean": mean_contributions}, 
-#        "lower": lower_ci_contributions, "upper": upper_ci_contributions},
         open("{}/likelihood_data.pickle".format(args.checkpoint_path.rstrip("/")), "wb"),
     )
 
@@ -222,7 +187,6 @@ def sample_generations(args, model, dataloader):
     all_samples = []
 
     for i, batch in enumerate(dataloader):
-#        try:
         if i >= users_sampled:
             break
         print_log("New user {}".format(i))
@@ -285,7 +249,6 @@ def sample_generations(args, model, dataloader):
 
                 held_out_marks = set(tgt_marks[...,math.floor(pct * tgt_timestamps.shape[-1]):].squeeze().tolist())
 
-                #print(sampled_times, sampled_marks)
                 print("Pct: {} | Left Window: {} |Num Original: {} | Num Conditioned: {} | Num Sampled Alone: {} | Unique Marks on Held Out: {} | Unique Marks Sampled: {} | Common Marks: {}".format(
                     pct,
                     left_window,
@@ -300,13 +263,11 @@ def sample_generations(args, model, dataloader):
                 user_samples["samples"][pct].append((sampled_times, sampled_marks))
         
         all_samples.append(user_samples)
-#        except:
-#            users_sampled += 1
 
     pickle.dump(all_samples, open("{}/scaling_samples_top_p_{}_top_k_{}.pickle".format(args.checkpoint_path.rstrip("/"), args.top_p, args.top_k), "wb"))
 
 def save_latents(args, model, dataloader):
-    num_samples = len(dataloader) #math.ceil(4000 / args.batch_size)
+    num_samples = len(dataloader) 
     model.eval() 
     latents = []
     for i,batch in enumerate(dataloader):

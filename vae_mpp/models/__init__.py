@@ -37,8 +37,7 @@ def get_model(
         dist = torch.distributions.Normal
     else:
         dist = torch.distributions.Laplace
-    print("USING DISTRIBUTION: {}".format(dist))
-
+        
     if hawkes:
         return HawkesModel(
             num_marks=num_channels,
@@ -73,14 +72,13 @@ def get_model(
             hidden_size=enc_hidden_size,
             latent_size=latent_size,
             noise=agg_noise,
-            q_z_x=dist, #torch.distributions.Laplace,
+            q_z_x=dist, 
         )
     else:
         encoder = None
         aggregator = None
 
     if neural_hawkes:
-        print("USING NEURAL HAWKES")
         decoder = HawkesDecoder(
             channel_embedding=channel_embedding,
             time_embedding=TemporalEmbedding(
@@ -95,7 +93,6 @@ def get_model(
             estimate_init_state=use_encoder,
         )
     elif rmtpp:
-        print("USING RMTPP")
         decoder = RMTPPDecoder(
             channel_embedding=channel_embedding,
             time_embedding=TemporalEmbedding(
@@ -130,6 +127,6 @@ def get_model(
         encoder=encoder,
         aggregator=aggregator,
         amortized=amortized,
-        q_z_x=aggregator.q_z_x if aggregator is not None else dist, # torch.distributions.Laplace,
-        p_z=dist, #torch.distributions.Laplace,
+        q_z_x=aggregator.q_z_x if aggregator is not None else dist, 
+        p_z=dist, 
     )

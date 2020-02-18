@@ -62,31 +62,19 @@ class HawkesModel(PPModel):
         mu = mu.unsqueeze(0).unsqueeze(0).expand(batch_size, seq_len, -1)
         alpha = torch.transpose(alpha.unsqueeze(-1).expand(-1, -1, -1, seq_len), 1, 3).contiguous()
         delta = torch.transpose(delta.unsqueeze(-1).expand(-1, -1, -1, seq_len), 1, 3).contiguous()
-        #print("alpha", alpha.shape)
-        #print("delta", delta.shape)
-        #print("mu", mu.shape)
 
         time_diffs = F.relu(timestamps.unsqueeze(2) - state_times.unsqueeze(1))
-        #print("td", time_diffs.shape)
         time_diffs = time_diffs.unsqueeze(2).expand(-1, -1, num_marks, -1)
-        #print("td", time_diffs.shape)
         valid_terms = time_diffs > 0
-        #print("vt", valid_terms.shape)
 
         prod = alpha * (-1 * delta * time_diffs).exp()
-        #print("prod", prod.shape)
         prod = torch.where(valid_terms, prod, torch.zeros_like(prod))
-        #print("prod", prod.shape)
-
 
         all_mark_intensities = mu + prod.sum(-1)
-        #print("ami", all_mark_intensities.shape)
 
         if not self.bounded:
             s = self.s.unsqueeze(0).unsqueeze(0).expand(batch_size, seq_len, -1).exp()
             all_mark_intensities = s * torch.log(1 + torch.exp(all_mark_intensities / s))
-            #print("ami", all_mark_intensities.shape)
-
 
         all_log_mark_intensities = all_mark_intensities.log()
         total_intensity = all_mark_intensities.sum(-1)
@@ -97,8 +85,6 @@ class HawkesModel(PPModel):
         }
 
         if marks is not None:
-            #gathered_probs = intensity_dict["log_mark_probs"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1)
-            #intensity_dict["log_mark_intensity"] = gathered_probs + intensity_dict["log_intensity"]
             intensity_dict["log_mark_intensity"] = intensity_dict["all_log_mark_intensities"].gather(dim=-1, index=marks.unsqueeze(-1)).squeeze(-1)
         
         return intensity_dict 
