@@ -14,35 +14,42 @@ from torch.utils.data import Dataset
 
 
 PADDING_VALUES = {
-    "ref_times": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
+    "ref_times": None, # 1000.0 # cannot be float('inf'), should be replaced with T + epsilon
     "ref_marks": 0,
-    "tgt_times": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
+    "tgt_times": None, # 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
     "tgt_marks": 0,
-    "ref_times_backwards": 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
+    "ref_times_backwards": None, # 1000.0,  # cannot be float('inf'), should be replaced with T + epsilon
     "ref_marks_backwards": 0,
     "padding_mask": 0,
+    "augment_mask": [0.0],
 }
 
-def _ld_to_dl(ld, padded_size):
+def _ld_to_dl(ld, padded_size, def_pad_value):
     """Converts list of dictionaries into dictionary of padded lists"""
     dl = defaultdict(list)
     for d in ld:
         for key, val in d.items():
             if key in PADDING_VALUES:
-                new_val = F.pad(val, (0, padded_size - val.shape[-1]), value=PADDING_VALUES[key])
+                pad_val = PADDING_VALUES[key]
+                if pad_val is None:
+                    pad_val = def_pad_value
+                if isinstance(pad_val, list):
+                    new_val = F.pad(val, (0, 0, 0, padded_size - val.shape[-2]), value=pad_val[0])
+                else:
+                    new_val = F.pad(val, (0, padded_size - val.shape[-1]), value=pad_val)
             else:
                 new_val = val
             dl[key].append(new_val)
     return dl
 
-def pad_and_combine_instances(batch):
+def pad_and_combine_instances(batch, def_pad_value):
     """
     A collate function for padding and combining instance dictionaries.
     """
     batch_size = len(batch)
     max_seq_len = max(max(len(ex["ref_times"]) for ex in batch), max(len(ex["tgt_times"]) for ex in batch))
 
-    out_dict = _ld_to_dl(batch, max_seq_len)
+    out_dict = _ld_to_dl(batch, max_seq_len, def_pad_value)
 
     return {k: torch.stack(v, dim=0) for k,v in out_dict.items()}  # dim=0 means batch is the first dimension
 
@@ -87,6 +94,9 @@ class PointPatternDataset(Dataset):
 
         self.same_tgt_and_ref = args.same_tgt_and_ref
 
+        self.do_augment = args.augment_loss_coef > 0
+        self.surprise_augment = args.augment_loss_surprise and self.do_augment
+
         # find a dominating rate for the dataset for the purposes of sampling
         if set_dominating_rate:
             max_rate = 0
@@ -102,6 +112,11 @@ class PointPatternDataset(Dataset):
 
             print("For Data Loaded, average rate {}, max rate {}, dominating rate {}".format(avg_rate, max_rate, args.dominating_rate))
 
+        max_period = 0
+        for instance in self._instances:
+            max_period = max(max_period, instance["T"])
+        self.max_period = max_period
+
     def __getitem__(self, idx):
         tgt_instance = self._instances[idx]
 
@@ -116,16 +131,39 @@ class PointPatternDataset(Dataset):
                 ref_instance = self._instances[random.choice(self.user_mapping[tgt_instance["user"]])]
             ref_times, ref_marks = ref_instance["times"], ref_instance["marks"]
 
+        tgt_marks = torch.LongTensor(tgt_marks)
+
+        if self.do_augment:
+            expanded_marks = torch.nn.functional.one_hot(tgt_marks, num_classes=self.max_channels)
+            if self.surprise_augment:
+                expanded_marks = expanded_marks.cumsum(dim=0)
+            else:
+                expanded_marks = expanded_marks.sum(dim=0).expand_as(expanded_marks)
+            augment_mask = torch.where( 
+                expanded_marks == 0, 
+                torch.ones_like(expanded_marks, dtype=torch.float32), 
+                torch.zeros_like(expanded_marks, dtype=torch.float32),
+            )
+            augment_mask_count = augment_mask.sum(dim=-1).unsqueeze(-1)
+            if (augment_mask_count == 0).any().item():
+                print("ZERO COUNT")
+                print(augment_mask)
+                input()
+            augment_mask = augment_mask / augment_mask_count
+        else:
+            augment_mask = torch.zeros(tgt_marks.shape[0], self.max_channels)
+
         item = {
             'ref_times': torch.FloatTensor(ref_times),
             'ref_marks': torch.LongTensor(ref_marks), 
             'ref_times_backwards': torch.FloatTensor(np.ascontiguousarray(ref_times[::-1])), 
             'ref_marks_backwards': torch.LongTensor(np.ascontiguousarray(ref_marks[::-1])),
             'tgt_times': torch.FloatTensor(tgt_times),
-            'tgt_marks': torch.LongTensor(tgt_marks),
+            'tgt_marks': tgt_marks,  # made into a tensor for loss augmentation
             'padding_mask': torch.ones(len(tgt_marks), dtype=torch.uint8),
             'context_lengths': torch.LongTensor([len(ref_times) - 1]),  # these will be used for indexing later, hence the subtracting 1
             'T': torch.FloatTensor([tgt_instance["T"]]),
+            'augment_mask': augment_mask,
         }
 
         if "pp_obj_id" in tgt_instance:

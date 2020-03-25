@@ -110,3 +110,5 @@ data/
 hawkes_jobs/
 rmtpp_jobs/
 non_hawkes_jobs/
+hawkes_aug_jobs/
+rmtpp_aug_jobs/

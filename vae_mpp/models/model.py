@@ -245,11 +245,13 @@ class PPModel(nn.Module):
             positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity)).sum(dim=-1)
             negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["total_intensity"].mean(dim=-1)  # Summing and divided by number of samples
 
-            return {
+            ll_results = {
                 "log_likelihood": ((1.0 * positive_samples) - negative_samples).mean(),
                 "positive_contribution": positive_samples.mean(),
                 "negative_contribution": negative_samples.mean(),
             }
+            ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"]
+            return ll_results
         else:
             positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity))
             negative_samples = return_dict["sample_intensities"]["total_intensity"]  # Summing and divided by number of samples
@@ -259,6 +261,31 @@ class PPModel(nn.Module):
                 "negative_contribution": negative_samples,
                 "cross_entropy": -(positive_samples - return_dict["tgt_intensities"]["total_intensity"].log()),
             }
+
+    def augmented_log_likelihood(
+        self,
+        return_dict,
+        right_window, 
+        augment_mask,
+        augment_coef,
+        left_window=0.0,
+        mask=None, 
+        reduce=True,
+    ):
+        if not reduce:
+            return self.log_likelihood(return_dict, right_window, left_window, mask, reduce)
+        
+        ll_results = self.log_likelihood(return_dict, right_window, left_window, mask, reduce=True)
+        log_mark_intensity = return_dict["tgt_intensities"]["all_log_mark_intensities"]  # ["log_mark_intensity"]
+        log_total_intensity = return_dict["tgt_intensities"]["total_intensity"].clamp(0.001, None).log().unsqueeze(-1)
+        log_mark_prob = log_mark_intensity - log_total_intensity
+        log_mark_comp_prob = (1 - log_mark_prob.exp()).clamp(0.001, 1.0).log()
+        selected_negative_marks = (augment_coef * augment_mask * log_mark_comp_prob).sum(dim=-1).sum(dim=-1)
+        
+        #ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"] - selected_negative_marks.mean()
+        ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"] + selected_negative_marks.mean()
+            
+        return ll_results
         
     def sample_points(self, ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths, dominating_rate, T, left_window, top_k=0, top_p=0.0):
         state = self.forward(ref_marks, ref_timestamps, ref_marks_bwd, ref_timestamps_bwd, tgt_marks, tgt_timestamps, context_lengths)

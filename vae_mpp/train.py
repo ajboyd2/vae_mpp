@@ -59,34 +59,45 @@ def forward_pass(args, batch, model, sample_timestamps=None, num_samples=150, ge
         pp_id=pp_id,
     )
 
-    
-
     # Calculate losses
-    ll_results = model.log_likelihood(
-        return_dict=results, 
-        right_window=T, 
-        left_window=0.0, 
-        mask=padding_mask,
-        reduce=not get_raw_likelihoods,
-    )
+    if args.augment_loss_coef > 0.0:
+        ll_results = model.augmented_log_likelihood(
+            return_dict=results, 
+            right_window=T, 
+            augment_mask=batch["augment_mask"],
+            augment_coef=args.augment_loss_coef,
+            left_window=0.0, 
+            mask=padding_mask,
+            reduce=not get_raw_likelihoods,
+        )
+    else:
+        ll_results = model.log_likelihood(
+            return_dict=results, 
+            right_window=T, 
+            left_window=0.0, 
+            mask=padding_mask,
+            reduce=not get_raw_likelihoods,
+        )
 
 
     if get_raw_likelihoods:
         return ll_results, sample_timestamps, tgt_timestamps
 
-    log_likelihood, ll_pos_contrib, ll_neg_contrib = \
-        ll_results["log_likelihood"], ll_results["positive_contribution"], ll_results["negative_contribution"]
+    augmented_log_likelihood, log_likelihood, ll_pos_contrib, ll_neg_contrib = \
+        ll_results["augmented_log_likelihood"], ll_results["log_likelihood"], ll_results["positive_contribution"], ll_results["negative_contribution"]
 
     if args.agg_noise and args.use_encoder:
         kl_term = kl_div(results["q_z_x"], results["p_z"]).mean()
     else:
         kl_term = torch.zeros_like(log_likelihood)
 
-    objective = log_likelihood - (args.loss_beta * kl_term) #- (args.loss_lambda * mmd_term)
+    #objective = log_likelihood - (args.loss_beta * kl_term) #- (args.loss_lambda * mmd_term)
+    objective = augmented_log_likelihood - (args.loss_beta * kl_term) #- (args.loss_lambda * mmd_term)
     loss = -1 * objective  # minimize loss, maximize objective
 
     return {
         "loss": loss,
+        "augmented_log_likelihood": augmented_log_likelihood,
         "log_likelihood": log_likelihood,
         "ll_pos": ll_pos_contrib,
         "ll_neg": ll_neg_contrib,
@@ -98,21 +109,37 @@ def backward_pass(args, loss, model, optimizer):
     optimizer.zero_grad()
 
     # TODO: Support different backwards passes for fp16
-    loss.backward()
-    
-    # TODO: If using data parallel, need to perform a reduce operation
-    # TODO: Update master gradients if using fp16
-    clip_grad(parameters=model.parameters(), max_norm=args.grad_clip, norm_type=2)
+    if torch.isnan(loss).any().item():
+        return False
+    else:
+        loss.backward()
+        
+        # TODO: If using data parallel, need to perform a reduce operation
+        # TODO: Update master gradients if using fp16
+        clip_grad(parameters=model.parameters(), max_norm=args.grad_clip, norm_type=2)
+        return True
 
 def train_step(args, model, optimizer, lr_scheduler, batch):
 
-    loss_results, _ = forward_pass(args, batch, model)
+    loss_results, forward_results = forward_pass(args, batch, model)
 
-    backward_pass(args, loss_results["loss"], model, optimizer)
-
-    optimizer.step()
-
-    lr_scheduler.step()
+    if backward_pass(args, loss_results["loss"], model, optimizer):
+        optimizer.step()
+        lr_scheduler.step()
+    else:
+        print_log('======= NAN-Loss =======')
+        print_log("Loss Results:", {k:(torch.isnan(v).any().item(), v.min().item(), v.max().item()) for k,v in loss_results.items() if isinstance(v, torch.Tensor)})
+        print_log("Loss Results:", loss_results)
+        print_log("")
+        print_log("Batch:", {k:(torch.isnan(v).any().item(), v.min().item(), v.max().item()) for k,v in batch.items() if isinstance(v, torch.Tensor)})
+        print_log("Batch:", batch)
+        print_log("")
+        print_log("Results:", {k:(torch.isnan(v).any().item(), v.min().item(), v.max().item()) for k,v in forward_results["state_dict"].items()})
+        print_log("Results:", {k:(torch.isnan(v).any().item(), v.min().item(), v.max().item()) for k,v in forward_results["tgt_intensities"].items()})
+        print_log("Results:", {k:(torch.isnan(v).any().item(), v.min().item(), v.max().item()) for k,v in forward_results["sample_intensities"].items()})
+        print_log("Results:", forward_results)
+        print_log("========================")
+        input()
 
     return loss_results
 
@@ -259,7 +286,7 @@ def get_data(args):
         batch_size=args.batch_size,
         shuffle=args.shuffle,
         num_workers=args.num_workers,
-        collate_fn=pad_and_combine_instances,
+        collate_fn=lambda x: pad_and_combine_instances(x, train_dataset.max_period),
         drop_last=True,
     )
 
@@ -275,7 +302,7 @@ def get_data(args):
             batch_size=args.batch_size,
             shuffle=args.shuffle,
             num_workers=args.num_workers,
-            collate_fn=pad_and_combine_instances,
+            collate_fn=lambda x: pad_and_combine_instances(x, valid_dataset.max_period),
             drop_last=True,
         )
         print_log("Loaded {} / {} validation examples / batches from {}".format(len(valid_dataset), len(valid_dataloader), args.valid_data_path))
@@ -362,7 +389,7 @@ def main(args):
     print_log("Starting training.")
     results = {"valid": [], "train": []}
     last_valid_ll = -float('inf')
-    epsilon = 0.4
+    epsilon = 0.1
 
     while epoch < args.train_epochs or args.early_stop:
         results["train"].append(train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1))

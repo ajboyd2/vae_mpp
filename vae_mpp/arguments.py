@@ -65,6 +65,8 @@ def training_args(parser):
     group.add_argument("--lr_decay_style", type=str, default="cosine", help="Decay style for the learning rate, after the warmup period.")
     group.add_argument("--dont_shuffle", action="store_true", help="Don't shuffle training and validation dataloaders.")
     group.add_argument("--early_stop", action="store_true", help="Does not predfine the number of epochs to run, but will instead stop when validation performance slows down or regresses.")
+    group.add_argument("--augment_loss_coef", type=float, default=0.0, help="Coefficient for negative contributions of mark intensities to be accounted for in loss.")
+    group.add_argument("--augment_loss_surprise", action="store_true", help="If enabled w/ augment_loss_coef > 0, then the negative contributions will punish marks that have not been seen yet, otherwise marks that don't appear in the sequence as a whole will be punished.")
 
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
@@ -73,7 +75,7 @@ def evaluation_args(parser):
     group.add_argument("--classify_latents", action='store_true', help="On validation, train a logistic regression model on latent vectors to classify PP id and report results.")
     group.add_argument("--visualize", action="store_true", help="In evaluate.py selects the visualization script to run.")
     group.add_argument("--sample_generations", action="store_true", help="In evaluate.py selects the generations script to run.")
-    group.add_argument("--num_samples", type=int, default=250, help="Number of sequences to generate samples from.")
+    group.add_argument("--num_samples", type=int, default=1000, help="Number of sequences to generate samples from.")
     group.add_argument("--samples_per_sequence", type=int, default=1, help="Number of samples to generate per sequence.")
     group.add_argument("--get_latents", action="store_true", help="Loads a model and saves latent states from the encoder.")
     group.add_argument("--top_k", type=int, default=0, help="Enables top_k sampling for marks.")

@@ -182,87 +182,98 @@ def sample_generations(args, model, dataloader):
     model.eval()
     samples_per_time = args.samples_per_sequence
     users_sampled = args.num_samples
-    T_pcts = [0.5, 0.3, 0.1, 0.05, 0.0]
+    T_pcts = [0.5, 0.3, 0.1] #, 0.05, 0.0]
 
     all_samples = []
+    data_iter = iter(dataloader)
 
-    for i, batch in enumerate(dataloader):
-        if i >= users_sampled:
-            break
-        print_log("New user {}".format(i))
+    i = 0
+    while i < users_sampled:
+#    for i, batch in enumerate(dataloader):
+#        if i >= users_sampled:
+#            break
+        try:
+            batch = next(data_iter)
+            print_log("New user {}".format(i))
 
-        if args.cuda:
-            batch = {k:v.cuda(torch.cuda.current_device()) for k,v in batch.items()}
+            if args.cuda:
+                batch = {k:v.cuda(torch.cuda.current_device()) for k,v in batch.items()}
 
-        ref_marks, ref_timestamps, context_lengths, padding_mask \
-            = batch["ref_marks"], batch["ref_times"], batch["context_lengths"], batch["padding_mask"]
-        ref_marks_backwards, ref_timestamps_backwards = batch["ref_marks_backwards"], batch["ref_times_backwards"]
-        tgt_marks, tgt_timestamps = batch["tgt_marks"], batch["tgt_times"]
-        pp_id = batch["pp_id"]
-        tgt_timestamps = tgt_timestamps[..., :padding_mask.cumsum(-1).max().item()]
-        tgt_marks = tgt_marks[..., :padding_mask.cumsum(-1).max().item()]
+            ref_marks, ref_timestamps, context_lengths, padding_mask \
+                = batch["ref_marks"], batch["ref_times"], batch["context_lengths"], batch["padding_mask"]
+            ref_marks_backwards, ref_timestamps_backwards = batch["ref_marks_backwards"], batch["ref_times_backwards"]
+            tgt_marks, tgt_timestamps = batch["tgt_marks"], batch["tgt_times"]
+            pp_id = batch["pp_id"]
+            tgt_timestamps = tgt_timestamps[..., :padding_mask.cumsum(-1).max().item()]
+            tgt_marks = tgt_marks[..., :padding_mask.cumsum(-1).max().item()]
 
-        T = batch["T"]  
+            T = batch["T"]  
 
-        user_samples = {"original_times": tgt_timestamps.squeeze().tolist(), "original_marks": tgt_marks.squeeze().tolist(), "original_T": T.squeeze().tolist(), "samples": {}}
+            user_samples = {"original_times": tgt_timestamps.squeeze().tolist(), "original_marks": tgt_marks.squeeze().tolist(), "original_T": T.squeeze().tolist(), "samples": {}}
 
-        for pct in T_pcts:
-            print_log("New pct {}".format(pct))
-            user_samples["samples"][pct] = []
-            if pct == 0.0:
-                new_tgt_timestamps = tgt_timestamps[..., :1]*10000
-                new_tgt_marks = tgt_marks[..., :1]
-                left_window = 0.0
-            else:
-                new_tgt_timestamps = tgt_timestamps[..., :math.floor(pct * tgt_timestamps.shape[-1])+1] #torch.where(good_times, tgt_timestamps, torch.ones_like(tgt_timestamps) * 10000)
-                new_tgt_marks = tgt_marks[..., :math.floor(pct * tgt_timestamps.shape[-1])+1]
-                left_window = new_tgt_timestamps[..., -1].squeeze().item()
+            for pct in T_pcts:
+                print_log("New pct {}".format(pct))
+                user_samples["samples"][pct] = []
+                if pct == 0.0:
+                    new_tgt_timestamps = tgt_timestamps[..., :1]*10000
+                    new_tgt_marks = tgt_marks[..., :1]
+                    left_window = 0.0
+                else:
+                    new_tgt_timestamps = tgt_timestamps[..., :math.floor(pct * tgt_timestamps.shape[-1])+1] #torch.where(good_times, tgt_timestamps, torch.ones_like(tgt_timestamps) * 10000)
+                    new_tgt_marks = tgt_marks[..., :math.floor(pct * tgt_timestamps.shape[-1])+1]
+                    left_window = new_tgt_timestamps[..., -1].squeeze().item()
 
-            for j in range(samples_per_time):
-                print("New sample {}".format(j))
-                samples = None
-                i = 1.0
-                while samples is None:
-                    if i >= 10.0:
-                        break
-                    samples = model.sample_points(
-                        ref_marks=ref_marks, 
-                        ref_timestamps=ref_timestamps, 
-                        ref_marks_bwd=ref_marks_backwards, 
-                        ref_timestamps_bwd=ref_timestamps_backwards, 
-                        tgt_marks=new_tgt_marks, 
-                        tgt_timestamps=new_tgt_timestamps, 
-                        context_lengths=context_lengths, 
-                        dominating_rate=args.dominating_rate * i, 
-                        T=T,
-                        left_window=left_window,
-                        top_k=args.top_k,
-                        top_p=args.top_p,
-                    )
-                    i *= 1.5
+                for j in range(samples_per_time):
+                    print("New sample {}".format(j))
+                    samples = None
+                    m = 1.0
+                    while samples is None:
+                        if m >= 10.0:
+                            break
+                        samples = model.sample_points(
+                            ref_marks=ref_marks, 
+                            ref_timestamps=ref_timestamps, 
+                            ref_marks_bwd=ref_marks_backwards, 
+                            ref_timestamps_bwd=ref_timestamps_backwards, 
+                            tgt_marks=new_tgt_marks, 
+                            tgt_timestamps=new_tgt_timestamps, 
+                            context_lengths=context_lengths, 
+                            dominating_rate=args.dominating_rate * m, 
+                            T=T,
+                            left_window=left_window,
+                            top_k=args.top_k,
+                            top_p=args.top_p,
+                        )
+                        m *= 1.5
 
-                if samples is None:
-                    print("No good sample found. Skipping")
-                    continue
+                    if samples is None:
+                        print("No good sample found. Skipping")
+                        continue
 
-                sampled_times, sampled_marks = samples
+                    sampled_times, sampled_marks = samples
 
-                held_out_marks = set(tgt_marks[...,math.floor(pct * tgt_timestamps.shape[-1]):].squeeze().tolist())
+                    held_out_marks = set(tgt_marks[...,math.floor(pct * tgt_timestamps.shape[-1]):].squeeze().tolist())
 
-                print("Pct: {} | Left Window: {} |Num Original: {} | Num Conditioned: {} | Num Sampled Alone: {} | Unique Marks on Held Out: {} | Unique Marks Sampled: {} | Common Marks: {}".format(
-                    pct,
-                    left_window,
-                    tgt_timestamps.squeeze().shape[0],
-                    math.floor(pct * tgt_timestamps.shape[-1]),
-                    len(sampled_times),
-                    len(held_out_marks),
-                    len(set(sampled_marks)),
-                    len(held_out_marks.intersection(set(sampled_marks))),
-                ))
-                assert(len(sampled_times) == 0 or left_window <= min(sampled_times))
-                user_samples["samples"][pct].append((sampled_times, sampled_marks))
-        
-        all_samples.append(user_samples)
+                    print("Pct: {} | Left Window: {} |Num Original: {} | Num Conditioned: {} | Num Sampled Alone: {} | Unique Marks on Held Out: {} | Unique Marks Sampled: {} | Common Marks: {}".format(
+                        pct,
+                        left_window,
+                        tgt_timestamps.squeeze().shape[0],
+                        math.floor(pct * tgt_timestamps.shape[-1]),
+                        len(sampled_times),
+                        len(held_out_marks),
+                        len(set(sampled_marks)),
+                        len(held_out_marks.intersection(set(sampled_marks))),
+                    ))
+                    assert(len(sampled_times) == 0 or left_window <= min(sampled_times))
+                    user_samples["samples"][pct].append((sampled_times, sampled_marks))
+            
+            all_samples.append(user_samples)
+            i += 1
+        except StopIteration:
+            break  # ran out of data
+        except:
+            continue  # data processing error
+
 
     pickle.dump(all_samples, open("{}/scaling_samples_top_p_{}_top_k_{}.pickle".format(args.checkpoint_path.rstrip("/"), args.top_p, args.top_k), "wb"))
 
