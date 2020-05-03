@@ -18,6 +18,7 @@ class IntensityNet(nn.Module):
         dropout,
         use_embedding_weights=False,
         factored_heads=True,
+        zero_inflated=False,
     ):
         super().__init__()
 
@@ -47,9 +48,14 @@ class IntensityNet(nn.Module):
             print("NON FACTORED HEADS")
             self.softplus = nn.Softplus()
 
+        self.zero_inflated = zero_inflated
+        if zero_inflated:
+            self.zero_prob_net = nn.Sequential(nn.Linear(hidden_size, num_channels), nn.Sigmoid())
+
     def forward(self, *args):
         x = torch.cat(args, dim=-1)
         assert(x.shape[-1] == self.input_size)
+        zero_probs = None
 
         pre_out = self.preprocessing_net(x)
 
@@ -65,11 +71,15 @@ class IntensityNet(nn.Module):
         else:
             mark_net_out = self.softplus(mark_net_out)
             all_log_mark_intensities = torch.log(mark_net_out + 1e-12)
+            if self.zero_inflated:
+                zero_probs = self.zero_prob_net(mark_net_out)
+                all_log_mark_intensities += zero_probs.log()
             total_intensity = mark_net_out.sum(dim=-1)
 
         return {
             "all_log_mark_intensities": all_log_mark_intensities,
             "total_intensity": total_intensity,
+            "zero_probs": zero_probs
         }
 
 class PPDecoder(nn.Module):
@@ -205,6 +215,7 @@ class HawkesDecoder(nn.Module):
         recurrent_hidden_size,
         latent_size=None,
         estimate_init_state=True,
+        zero_inflated=False,
     ):
         super().__init__()
         if latent_size is None:
@@ -233,6 +244,11 @@ class HawkesDecoder(nn.Module):
                 name="init_hidden_state",
                 param=nn.Parameter(xavier_truncated_normal(size=(1, 6*recurrent_hidden_size), no_average=True))
             )
+        
+        self.zero_inflated = zero_inflated
+        if zero_inflated:
+            print("ZERO INFLATED NEURAL HAWKES PROCESS")
+            self.zero_prob_net = nn.Sequential(nn.Linear(recurrent_hidden_size, self.num_channels), nn.Sigmoid())
 
     def get_init_states(self, batch_size, latent_state=None):
         if self.estimate_init_state:
@@ -326,6 +342,7 @@ class HawkesDecoder(nn.Module):
             [type] -- [description]
         """
         closest_dict = find_closest(sample_times=timestamps, true_times=state_times)
+        zero_probs = None
 
         padded_state_values = state_values 
 
@@ -337,11 +354,15 @@ class HawkesDecoder(nn.Module):
 
         intensity_values = F.softplus(self.hidden_to_intensity_logits(h_t))
         all_log_mark_intensities = torch.log(intensity_values + 1e-12)
+        if self.zero_inflated:
+            zero_probs = self.zero_prob_net(h_t)
+            all_log_mark_intensities += torch.log(zero_probs + 1e-12)
         total_intensity = intensity_values.sum(dim=-1)
 
         return {
             "all_log_mark_intensities": all_log_mark_intensities,
             "total_intensity": total_intensity,
+            "zero_probs": zero_probs,
         }
 
 class RMTPPDecoder(nn.Module):
@@ -354,6 +375,7 @@ class RMTPPDecoder(nn.Module):
         recurrent_hidden_size,
         latent_size=None,
         estimate_init_state=True,
+        zero_inflated=False,
     ):
         super().__init__()
         if latent_size is None:
@@ -390,6 +412,11 @@ class RMTPPDecoder(nn.Module):
                 name="init_hidden_state",
                 param=nn.Parameter(xavier_truncated_normal(size=(1, 1, 2*recurrent_hidden_size), no_average=True))
             )
+
+        if zero_inflated:
+            print("ZERO INFLATED RMTPP")
+            self.zero_prob_net = nn.Sequential(nn.Linear(recurrent_hidden_size, self.num_channels), nn.Sigmoid())
+
 
     def get_init_states(self, batch_size, latent_state=None):
         if self.estimate_init_state:
@@ -450,6 +477,7 @@ class RMTPPDecoder(nn.Module):
             [type] -- [description]
         """
         closest_dict = find_closest(sample_times=timestamps, true_times=state_times)
+        zero_probs = None
 
         padded_state_values = state_values 
 
@@ -461,10 +489,15 @@ class RMTPPDecoder(nn.Module):
 
         all_log_mark_intensities = hs_logits + time_logits
 
+        if self.zero_inflated:
+            zero_probs = self.zero_prob_net(h_t)
+            all_log_mark_intensities += torch.log(zero_probs + 1e-12)
+
         intensity_values = torch.exp(all_log_mark_intensities)
         total_intensity = intensity_values.sum(dim=-1)
 
         return {
             "all_log_mark_intensities": all_log_mark_intensities,
             "total_intensity": total_intensity,
+            "zero_probs": zeor_probs,
         }

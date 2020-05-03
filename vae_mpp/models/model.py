@@ -57,6 +57,7 @@ class PPModel(nn.Module):
         amortized=True,
         p_z=torch.distributions.Laplace,
         q_z_x=torch.distributions.Laplace,
+        zero_inflated=False,
     ):
         """Constructor for general PPModel class.
         
@@ -86,6 +87,7 @@ class PPModel(nn.Module):
                 nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False),  # mu
                 nn.Parameter(torch.zeros(1, decoder.latent_size), requires_grad=False)  # logvar
             ])
+        self.zero_inflated = zero_inflated
 
     def get_prior_params(self):
         return self._p_z_params[0], F.softmax(self._p_z_params[1], dim=-1) * self._p_z_params[1].size(-1)
@@ -274,16 +276,23 @@ class PPModel(nn.Module):
     ):
         if not reduce:
             return self.log_likelihood(return_dict, right_window, left_window, mask, reduce)
-        
-        ll_results = self.log_likelihood(return_dict, right_window, left_window, mask, reduce=True)
-        log_mark_intensity = return_dict["tgt_intensities"]["all_log_mark_intensities"]  # ["log_mark_intensity"]
-        log_total_intensity = return_dict["tgt_intensities"]["total_intensity"].clamp(0.001, None).log().unsqueeze(-1)
-        log_mark_prob = log_mark_intensity - log_total_intensity
-        log_mark_comp_prob = (1 - log_mark_prob.exp()).clamp(0.001, 1.0).log()
-        selected_negative_marks = (augment_coef * augment_mask * log_mark_comp_prob).sum(dim=-1).sum(dim=-1)
-        
-        #ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"] - selected_negative_marks.mean()
-        ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"] + selected_negative_marks.mean()
+        if self.zero_inflated:
+            ll_results = self.log_likelihood(return_dict, right_window, left_window, mask, reduce=True)
+            zero_probs = return_dict["tgt_intensities"]["zero_probs"]
+            log_likelihood_bernoulli = torch.where(augment_mask > 0, zero_probs, 1 - zero_probs).log()  # [batch, sequence, marks]
+            reduced_ll_bern = log_likelihood_bernoulli.mean(dim=-1).sum(dim=-1)  # averaged over marks, summed across sequence
+
+            ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"] + augment_coef * reduced_ll_bern.mean()  # averaged over batch
+        else:
+            ll_results = self.log_likelihood(return_dict, right_window, left_window, mask, reduce=True)
+            log_mark_intensity = return_dict["tgt_intensities"]["all_log_mark_intensities"]  # ["log_mark_intensity"]
+            log_total_intensity = return_dict["tgt_intensities"]["total_intensity"].clamp(0.001, None).log().unsqueeze(-1)
+            log_mark_prob = log_mark_intensity - log_total_intensity
+            log_mark_comp_prob = (1 - log_mark_prob.exp()).clamp(0.001, 1.0).log()
+            selected_negative_marks = (augment_coef * augment_mask * log_mark_comp_prob).sum(dim=-1).sum(dim=-1)
+            
+            #ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"] - selected_negative_marks.mean()
+            ll_results["augmented_log_likelihood"] = ll_results["log_likelihood"] + selected_negative_marks.mean()
             
         return ll_results
         
