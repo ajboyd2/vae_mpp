@@ -32,6 +32,7 @@ def get_model(
     neural_hawkes=False,
     rmtpp=False,
     normal_dist=False,
+    zero_inflated=False,
 ):
     if normal_dist:
         dist = torch.distributions.Normal
@@ -91,6 +92,7 @@ def get_model(
             recurrent_hidden_size=dec_recurrent_hidden_size,
             latent_size=latent_size if use_encoder else 0,
             estimate_init_state=use_encoder,
+            zero_inflated=zero_inflated,
         )
     elif rmtpp:
         decoder = RMTPPDecoder(
@@ -105,6 +107,7 @@ def get_model(
             recurrent_hidden_size=dec_recurrent_hidden_size,
             latent_size=latent_size if use_encoder else 0,
             estimate_init_state=use_encoder,
+            zero_inflated=zero_inflated,
         )
     else:
         decoder = PPDecoder(
@@ -120,6 +123,7 @@ def get_model(
             factored_heads=dec_intensity_factored_heads,
             use_embedding_weights=dec_intensity_use_embeddings,
             estimate_init_state=use_encoder,
+            zero_inflated=zero_inflated,
         )
 
     return PPModel(
@@ -129,4 +133,5 @@ def get_model(
         amortized=amortized,
         q_z_x=aggregator.q_z_x if aggregator is not None else dist, 
         p_z=dist, 
+        zero_inflated=zero_inflated,
     )

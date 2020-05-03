@@ -170,14 +170,14 @@ def train_epoch(args, model, optimizer, lr_scheduler, dataloader, epoch_number):
 def eval_step(args, model, batch, num_samples=150):
     return forward_pass(args, batch, model, num_samples=num_samples)
 
-def eval_epoch(args, model, valid_dataloader, train_dataloader, epoch_number, num_samples=150):
+def eval_epoch(args, model, eval_dataloader, train_dataloader, epoch_number, num_samples=150):
     model.eval()
 
     with torch.no_grad():
         total_losses = defaultdict(lambda: 0.0)
-        data_len = len(valid_dataloader)
+        data_len = len(eval_dataloader)
         valid_latents, valid_labels = [], []
-        for i, batch in enumerate(valid_dataloader):
+        for i, batch in enumerate(eval_dataloader):
             batch_loss, results = eval_step(args, model, batch, num_samples)
             if args.classify_latents:
                 valid_latents.append(results["latent_state_dict"]["latent_state"])
@@ -266,6 +266,7 @@ def setup_model_and_optim(args, epoch_len):
         neural_hawkes=args.neural_hawkes,
         rmtpp=args.rmtpp,
         normal_dist=args.normal_dist,
+        zero_inflated=args.zero_inflated,
     )
 
     if args.cuda:
@@ -278,7 +279,13 @@ def setup_model_and_optim(args, epoch_len):
     return model, optimizer, lr_scheduler
 
 def get_data(args):
-    train_dataset = PointPatternDataset(file_path=args.train_data_path, args=args, keep_pct=args.train_data_percentage, set_dominating_rate=args.sample_generations)
+    train_dataset = PointPatternDataset(
+        file_path=args.train_data_path, 
+        args=args, 
+        keep_pct=args.train_data_percentage, 
+        set_dominating_rate=args.sample_generations,
+        is_test=False,
+    )
     args.num_channels = train_dataset.vocab_size
 
     train_dataloader = DataLoader(
@@ -295,7 +302,13 @@ def get_data(args):
     print_log("Loaded {} / {} training examples / batches from {}".format(len(train_dataset), len(train_dataloader), args.train_data_path))
 
     if args.do_valid:
-        valid_dataset = PointPatternDataset(file_path=args.valid_data_path, args=args, keep_pct=1.0, set_dominating_rate=False)
+        valid_dataset = PointPatternDataset(
+            file_path=args.valid_data_path, 
+            args=args, 
+            keep_pct=args.valid_to_test_pct, 
+            set_dominating_rate=False,
+            is_test=False,
+        )
 
         valid_dataloader = DataLoader(
             dataset=valid_dataset,
@@ -306,11 +319,30 @@ def get_data(args):
             drop_last=True,
         )
         print_log("Loaded {} / {} validation examples / batches from {}".format(len(valid_dataset), len(valid_dataloader), args.valid_data_path))
+
+        test_dataset = PointPatternDataset(
+            file_path=args.valid_data_path, 
+            args=args, 
+            keep_pct=1.0 - args.valid_to_test_pct, 
+            set_dominating_rate=False,
+            is_test=True,
+        )
+
+        test_dataloader = DataLoader(
+            dataset=test_dataset,
+            batch_size=args.batch_size,
+            shuffle=args.shuffle,
+            num_workers=args.num_workers,
+            collate_fn=lambda x: pad_and_combine_instances(x, test_dataset.max_period),
+            drop_last=True,
+        )
+        print_log("Loaded {} / {} test examples / batches from {}".format(len(valid_dataset), len(valid_dataloader), args.valid_data_path))
     else:
         valid_dataloader = None
+        test_dataloader = None
 
 
-    return train_dataloader, valid_dataloader    
+    return train_dataloader, valid_dataloader, test_dataloader 
 
 def save_checkpoint(args, model, optimizer, lr_scheduler, epoch):
     # Create folder if not already created
@@ -373,7 +405,7 @@ def main(args):
     set_random_seed(args)
 
     print_log("Setting up dataloaders.")
-    train_dataloader, valid_dataloader = get_data(args)
+    train_dataloader, valid_dataloader, test_dataloader = get_data(args)
     
     print_log("Setting up model, optimizer, and learning rate scheduler.")
     model, optimizer, lr_scheduler = setup_model_and_optim(args, len(train_dataloader))
@@ -387,9 +419,9 @@ def main(args):
     original_epoch = epoch
 
     print_log("Starting training.")
-    results = {"valid": [], "train": []}
+    results = {"valid": [], "train": [], "test": []}
     last_valid_ll = -float('inf')
-    epsilon = 0.1
+    epsilon = 0.03
 
     while epoch < args.train_epochs or args.early_stop:
         results["train"].append(train_epoch(args, model, optimizer, lr_scheduler, train_dataloader, epoch+1))
@@ -412,22 +444,23 @@ def main(args):
         save_checkpoint(args, model, optimizer, lr_scheduler, epoch)
 
     if args.do_valid:
-        overall_valid_results = {}
+        overall_test_results = {}
         reps = 5    
         for _ in range(reps):
-            valid_results = eval_epoch(args, model, valid_dataloader, train_dataloader, epoch+1, num_samples=500)
-            for k,v in valid_results.items():
-                if k not in overall_valid_results:
-                    overall_valid_results[k] = v / reps
+            test_results = eval_epoch(args, model, test_dataloader, train_dataloader, epoch+1, num_samples=500)
+            for k,v in test_results.items():
+                if k not in overall_test_results:
+                    overall_test_results[k] = v / reps
                 else:
-                    overall_valid_results[k] += v / reps
-        results["valid"].append(overall_valid_results)
+                    overall_test_results[k] += v / reps
+            results["test"].append(overall_test_results)
     
     del model
     del optimizer
     del lr_scheduler
     del train_dataloader
     del valid_dataloader
+    del test_dataloader
     torch.cuda.empty_cache()
 
     return results

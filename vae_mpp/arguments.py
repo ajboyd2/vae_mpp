@@ -41,6 +41,7 @@ def model_config_args(parser):
     group.add_argument("--rmtpp", action="store_true", help="Makes decoder use the RMTPP architecture.")
     group.add_argument("--s2s", action="store_true", help="Removes Variational part to the VAE setup.")
     group.add_argument("--normal_dist", action="store_true", help="Enables distributions to be Normal. Laplacian otherwise.")
+    group.add_argument("--zero_inflated", action="store_true", help="Enables the model specified to be in 'zero inflated' mode meaning that an additional bernoulli variable will be modeled to artificially inflate zero counts in corresponding output intensities.")
 
 def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
@@ -65,13 +66,14 @@ def training_args(parser):
     group.add_argument("--lr_decay_style", type=str, default="cosine", help="Decay style for the learning rate, after the warmup period.")
     group.add_argument("--dont_shuffle", action="store_true", help="Don't shuffle training and validation dataloaders.")
     group.add_argument("--early_stop", action="store_true", help="Does not predfine the number of epochs to run, but will instead stop when validation performance slows down or regresses.")
-    group.add_argument("--augment_loss_coef", type=float, default=0.0, help="Coefficient for negative contributions of mark intensities to be accounted for in loss.")
+    group.add_argument("--augment_loss_coef", type=float, default=0.0, help="Coefficient for negative contributions of mark intensities to be accounted for in loss. In enabled with zero_inflated then this will be used as observed values for the modeled bernoulli variables.")
     group.add_argument("--augment_loss_surprise", action="store_true", help="If enabled w/ augment_loss_coef > 0, then the negative contributions will punish marks that have not been seen yet, otherwise marks that don't appear in the sequence as a whole will be punished.")
 
 def evaluation_args(parser):
     group = parser.add_argument_group("Evaluation specification arguments.")
     group.add_argument("--valid_data_path", nargs="+", type=str, default=["./data/1_pp/validation.pickle"], help="Path to training data file.")
     group.add_argument("--valid_epochs", type=int, default=5, help="Number of epochs to execute validation on.")
+    group.add_argument("--valid_to_test_pct", type=float, default=0.3, help="Percentage of held out data to be used for validation, rest is used for testing at the end.")
     group.add_argument("--classify_latents", action='store_true', help="On validation, train a logistic regression model on latent vectors to classify PP id and report results.")
     group.add_argument("--visualize", action="store_true", help="In evaluate.py selects the visualization script to run.")
     group.add_argument("--sample_generations", action="store_true", help="In evaluate.py selects the generations script to run.")

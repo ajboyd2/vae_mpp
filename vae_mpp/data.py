@@ -61,6 +61,7 @@ class PointPatternDataset(Dataset):
         args,
         keep_pct,
         set_dominating_rate,
+        is_test=False,
     ):
         """
         Loads text file containing realizations of point processes.
@@ -72,6 +73,7 @@ class PointPatternDataset(Dataset):
         """
         self.keep_pct = keep_pct
         self.max_channels = args.num_channels
+        self.is_test = is_test
 
         if len(file_path) == 1 and os.path.isdir(file_path[0]):
             file_path = [file_path[0].rstrip("/") + "/" + fp for fp in os.listdir(file_path[0])]
@@ -234,8 +236,11 @@ class PointPatternDataset(Dataset):
             old_len = len(instances)
             users = list(set(instance["user"] for instance in instances))
             indices = list(range(len(users)))
-            random.shuffle(indices)
-            indices = sorted(indices[:math.floor(len(users) * self.keep_pct)])
+            random.Random(0).shuffle(indices)  # seeded shuffle
+            if self.is_test:
+                indices = sorted(indices[math.floor(len(users) * self.keep_pct:)])
+            else:
+                indices = sorted(indices[:math.floor(len(users) * self.keep_pct)])
             users = set(users[idx] for idx in indices)
             instances = [instance for instance in instances if instance['user'] in users]
             print("Before filtering: {} | After filtering: {} | Prop: {} | Goal: {}".format(old_len, len(instances), len(instances) / old_len, self.keep_pct))
