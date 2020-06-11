@@ -33,6 +33,7 @@ def get_model(
     rmtpp=False,
     normal_dist=False,
     zero_inflated=False,
+    personalized_head=False,
 ):
     if normal_dist:
         dist = torch.distributions.Normal
@@ -93,6 +94,7 @@ def get_model(
             latent_size=latent_size if use_encoder else 0,
             estimate_init_state=use_encoder,
             zero_inflated=zero_inflated,
+            personalized_head=personalized_head,
         )
     elif rmtpp:
         decoder = RMTPPDecoder(
@@ -108,6 +110,7 @@ def get_model(
             latent_size=latent_size if use_encoder else 0,
             estimate_init_state=use_encoder,
             zero_inflated=zero_inflated,
+            personalized_head=personalized_head,
         )
     else:
         decoder = PPDecoder(

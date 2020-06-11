@@ -5,6 +5,7 @@ import os
 import random
 import math
 
+from copy import deepcopy
 from collections import defaultdict
 from parse import findall
 
@@ -118,6 +119,8 @@ class PointPatternDataset(Dataset):
         for instance in self._instances:
             max_period = max(max_period, instance["T"])
         self.max_period = max_period
+        args.max_seq_len = self.max_seq_len
+        self.explicit_pairings = False
 
     def __getitem__(self, idx):
         tgt_instance = self._instances[idx]
@@ -127,7 +130,9 @@ class PointPatternDataset(Dataset):
         if self.same_tgt_and_ref:
             ref_times, ref_marks = tgt_times, tgt_marks
         else:
-            if self.is_valid:
+            if self.explicit_pairings:
+                ref_instance = self._ref_instances[idx]
+            elif self.is_valid:
                 ref_instance = self._instances[random.choice([ref_idx for ref_idx in self.user_mapping[tgt_instance["user"]] if ref_idx != idx])]
             else:
                 ref_instance = self._instances[random.choice(self.user_mapping[tgt_instance["user"]])]
@@ -167,6 +172,9 @@ class PointPatternDataset(Dataset):
             'T': torch.FloatTensor([tgt_instance["T"]]),
             'augment_mask': augment_mask,
         }
+
+        if self.explicit_pairings:
+            item['same_source'] = torch.BoolTensor([tgt_instance["user"] == ref_instance["user"]])
 
         if "pp_obj_id" in tgt_instance:
             item["pp_id"] = torch.LongTensor([tgt_instance["pp_obj_id"]])
@@ -234,11 +242,11 @@ class PointPatternDataset(Dataset):
 
         if self.keep_pct < 1:
             old_len = len(instances)
-            users = list(set(instance["user"] for instance in instances))
+            users = sorted(list(set(instance["user"] for instance in instances)))  # sort to make future selection deterministic
             indices = list(range(len(users)))
             random.Random(0).shuffle(indices)  # seeded shuffle
             if self.is_test:
-                indices = sorted(indices[math.floor(len(users) * self.keep_pct:)])
+                indices = sorted(indices[math.floor(len(users) * self.keep_pct):])
             else:
                 indices = sorted(indices[:math.floor(len(users) * self.keep_pct)])
             users = set(users[idx] for idx in indices)
@@ -256,7 +264,9 @@ class PointPatternDataset(Dataset):
             elif "user" in item:
                 self.user_mapping[item["user"]].append(i)
 
-        med_len = sorted([len(item["times"]) for item in instances])[len(instances)//2]
+        lengths = sorted([len(item["times"]) for item in instances])
+        med_len = lengths[len(instances)//2]
+        self.max_seq_len = lengths[-1]
         avg_len = sum(len(item["times"]) for item in instances) / len(instances)
         med_su = sorted([len(v) for k,v in self.user_mapping.items()])[len(self.user_mapping) // 2]
         print("SEQS {} | USERS {} | Med S/U {} | Avg S/U {} | Med SEQ LEN {} | Avg SEQ LEN {}".format(
@@ -264,3 +274,100 @@ class PointPatternDataset(Dataset):
         ))
 
         return instances, vocab_size
+
+
+class AnomalyDetectionDataset(PointPatternDataset):
+    '''This dataset is used for the anomaly detection task for 
+    detecting pairs of sequences potentially mismatched by source/user.'''
+
+    def __init__(
+        self,
+        file_path,
+        args,
+        max_tgt_seq_len=None,
+        num_total_pairs=1000,
+        test=True,
+    ):
+        super().__init__(
+            file_path=file_path,
+            args=args,
+            keep_pct=args.valid_to_test_pct,
+            set_dominating_rate=False,
+            is_test=test,
+        )
+
+        self.explicit_pairings = True        
+        self.max_tgt_seq_len = max_tgt_seq_len
+
+        self.anomaly_same_tgt_diff_refs = args.anomaly_same_tgt_diff_refs
+        self.anomaly_truncate_tgts = args.anomaly_truncate_tgts
+        self.anomaly_truncate_refs = args.anomaly_truncate_refs
+
+        indices = list(range(len(self._instances)))
+        random.Random(0).shuffle(indices)
+        # tgt_indices = indices[:num_total_pairs // 2]
+        # tgt_instances = [self._instances[tgt_idx] for tgt_idx in tgt_indices]
+        same_instances, same_indices = [], []
+        i = -1
+        while len(same_instances) < (num_total_pairs // 2):
+            i += 1
+            if i >= len(self._instances):
+                break
+            same_idx = indices[i]
+            same_instance = self._instances[same_idx]
+            ### This original code would make it so that if a sequence had less than max_tgt_seq_len
+            ### then it would be thrown out.
+            ### Without it, we will be taking partial sequences _up to_ max_tgt_seq_len instead of only
+            ### the max_tgt_seq_len.
+            # if max_tgt_seq_len is not None:
+            #     if len(tgt_instance["marks"]) < max_tgt_seq_len:
+            #         continue
+            same_instances.append(same_instance)
+            same_indices.append(same_idx)
+
+        good_ref_instances = []
+        for same_instance, same_idx in zip(same_instances, same_indices):
+            choice_indices = [ref_idx for ref_idx in self.user_mapping[same_instance["user"]] if ref_idx != same_idx]
+            ref_idx = random.Random(same_idx).choice(choice_indices)
+            good_ref_instances.append(deepcopy(self._instances[ref_idx]))
+
+        bad_ref_instances = []
+        offset = 0
+        while len(bad_ref_instances) < len(good_ref_instances):
+            i = len(bad_ref_instances)
+            same_instance, same_idx = same_instances[i], same_indices[i]
+            random_idx = random.Random(same_idx + offset).choice(indices)
+            random_instance = self._instances[random_idx]
+            if random_instance["user"] == same_instance["user"]:
+                offset += 1
+                continue
+            else:
+                offset = 0
+                bad_ref_instances.append(deepcopy(random_instance))
+        
+        if self.anomaly_same_tgt_diff_refs:
+            self._instances = same_instances + same_instances
+            self._ref_instances = good_ref_instances + bad_ref_instances
+        else:
+            self._ref_instances = same_instances + same_instances
+            self._instances = good_ref_instances + bad_ref_instances
+
+        if self.anomaly_truncate_tgts:
+            if max_tgt_seq_len is not None:
+                for i in range(len(self._instances)):
+                    tgt_instance = self._instances[i]
+                    if len(tgt_instance["marks"]) > max_tgt_seq_len:
+                        tgt_instance["marks"] = tgt_instance["marks"][:max_tgt_seq_len]
+                        tgt_instance["times"] = tgt_instance["times"][:max_tgt_seq_len]
+                        tgt_instance["T"] = tgt_instance["times"][-1] + 1e-8
+                        self._instances[i] = tgt_instance
+
+        if self.anomaly_truncate_refs:
+            if max_tgt_seq_len is not None:
+                for i in range(len(self._ref_instances)):
+                    ref_instance = self._ref_instances[i]
+                    if len(ref_instance["marks"]) > max_tgt_seq_len:
+                        ref_instance["marks"] = ref_instance["marks"][:max_tgt_seq_len]
+                        ref_instance["times"] = ref_instance["times"][:max_tgt_seq_len]
+                        ref_instance["T"] = ref_instance["times"][-1] + 1e-8
+                        self._ref_instances[i] = ref_instance

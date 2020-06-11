@@ -152,7 +152,7 @@ def train_epoch(args, model, optimizer, lr_scheduler, dataloader, epoch_number):
         batch_loss = train_step(args, model, optimizer, lr_scheduler, batch)
         for k, v in batch_loss.items():
             total_losses[k] += v.item()
-        if (i+1) % args.log_interval == 0:
+        if ((i+1) % args.log_interval == 0) or ((i+1 <= 5) and (epoch_number<=1)):
             items_to_print = [("LR", lr_scheduler.get_lr())]
             items_to_print.extend([(k,v/args.log_interval) for k,v in total_losses.items()])
             items_to_print.extend([("beta", args.loss_beta), ("lambda", args.loss_lambda)])
@@ -267,10 +267,12 @@ def setup_model_and_optim(args, epoch_len):
         rmtpp=args.rmtpp,
         normal_dist=args.normal_dist,
         zero_inflated=args.zero_inflated,
+        personalized_head=args.personalized_head,
     )
 
     if args.cuda:
-        torch.cuda.set_device(0)
+        print(f"USING GPU {args.device_num}")
+        torch.cuda.set_device(args.device_num)
         model.cuda(torch.cuda.current_device())
 
     optimizer = get_optimizer(model, args)
@@ -323,20 +325,21 @@ def get_data(args):
         test_dataset = PointPatternDataset(
             file_path=args.valid_data_path, 
             args=args, 
-            keep_pct=1.0 - args.valid_to_test_pct, 
+            keep_pct=args.valid_to_test_pct,  # object accounts for the test set having (1 - valid_to_test_pct) amount
             set_dominating_rate=False,
             is_test=True,
         )
 
         test_dataloader = DataLoader(
             dataset=test_dataset,
-            batch_size=args.batch_size,
+            batch_size=args.batch_size // 4,
             shuffle=args.shuffle,
             num_workers=args.num_workers,
             collate_fn=lambda x: pad_and_combine_instances(x, test_dataset.max_period),
             drop_last=True,
+            pin_memory=args.pin_test_memory,
         )
-        print_log("Loaded {} / {} test examples / batches from {}".format(len(valid_dataset), len(valid_dataloader), args.valid_data_path))
+        print_log("Loaded {} / {} test examples / batches from {}".format(len(test_dataset), len(test_dataloader), args.valid_data_path))
     else:
         valid_dataloader = None
         test_dataloader = None
@@ -364,14 +367,22 @@ def save_checkpoint(args, model, optimizer, lr_scheduler, epoch):
 def load_checkpoint(args, model):
     folder_path = args.checkpoint_path
     if not os.path.exists(folder_path):
+        print_log(f"Checkpoint path [{folder_path}] does not exist.")
         return 0
+
+    print_log(f"Checkpoint path [{folder_path}] does exist.")
     files = [f for f in os.listdir(folder_path) if ".pt" in f]
     if len(files) == 0:
+        print_log("No .pt files found in checkpoint path.")
         return 0
+
     latest_model = sorted(files)[-1]
     file_path = "{}/{}".format(folder_path.rstrip("/"), latest_model)
+
     if not os.path.exists(file_path):
+        print_log(f"File [{file_path}] not found.")
         return 0
+
     model.load_state_dict(torch.load(file_path, map_location=lambda storage, loc: storage))
     if args.cuda:
         model.cuda(torch.cuda.current_device())
@@ -448,12 +459,12 @@ def main(args):
         reps = 5    
         for _ in range(reps):
             test_results = eval_epoch(args, model, test_dataloader, train_dataloader, epoch+1, num_samples=500)
-            for k,v in test_results.items():
-                if k not in overall_test_results:
-                    overall_test_results[k] = v / reps
-                else:
-                    overall_test_results[k] += v / reps
-            results["test"].append(overall_test_results)
+            # for k,v in test_results.items():
+            #     if k not in overall_test_results:
+            #         overall_test_results[k] = v / reps
+            #     else:
+            #         overall_test_results[k] += v / reps
+            results["test"].append(test_results)#overall_test_results)
     
     del model
     del optimizer

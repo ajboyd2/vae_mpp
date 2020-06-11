@@ -243,9 +243,13 @@ class PPModel(nn.Module):
             assert(all(x == y for x,y in zip(return_dict["tgt_intensities"]["log_mark_intensity"].shape, mask.shape)))  # make sure they are same size
 
         log_mark_intensity = return_dict["tgt_intensities"]["log_mark_intensity"]
+        window = right_window - left_window
+        if len(window.shape) > 1:
+            window = window.squeeze(-1)
         if reduce:
             positive_samples = torch.where(mask, log_mark_intensity, torch.zeros_like(log_mark_intensity)).sum(dim=-1)
-            negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["total_intensity"].mean(dim=-1)  # Summing and divided by number of samples
+            #negative_samples = (right_window - left_window) * return_dict["sample_intensities"]["total_intensity"].mean(dim=-1)  # Summing and divided by number of samples
+            negative_samples = window * return_dict["sample_intensities"]["total_intensity"].mean(dim=-1)  # Summing and divided by number of samples
 
             ll_results = {
                 "log_likelihood": ((1.0 * positive_samples) - negative_samples).mean(),
@@ -262,6 +266,7 @@ class PPModel(nn.Module):
                 "positive_contribution": positive_samples,
                 "negative_contribution": negative_samples,
                 "cross_entropy": -(positive_samples - return_dict["tgt_intensities"]["total_intensity"].log()),
+                "batch_log_likelihood": positive_samples.sum(dim=-1) - (window * negative_samples.mean(dim=-1)),
             }
 
     def augmented_log_likelihood(

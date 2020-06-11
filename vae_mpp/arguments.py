@@ -10,6 +10,7 @@ def general_args(parser):
     group.add_argument("--seed", type=int, default=1234321, help="Seed for all random processes.")
     group.add_argument("--dont_print_args", action="store_true", help="Specify to disable printing of arguments.")
     group.add_argument("--cuda", action="store_true", help="Convert model and data to GPU.")
+    group.add_argument("--device_num", type=int, default=0, help="Should cuda be enabled, this is the GPU id to use.")
 
 def model_config_args(parser):
     group = parser.add_argument_group("Model configuration arguments.")
@@ -42,6 +43,7 @@ def model_config_args(parser):
     group.add_argument("--s2s", action="store_true", help="Removes Variational part to the VAE setup.")
     group.add_argument("--normal_dist", action="store_true", help="Enables distributions to be Normal. Laplacian otherwise.")
     group.add_argument("--zero_inflated", action="store_true", help="Enables the model specified to be in 'zero inflated' mode meaning that an additional bernoulli variable will be modeled to artificially inflate zero counts in corresponding output intensities.")
+    group.add_argument("--personalized_head", action="store_true", help="Adds a linear transformation of the user embedding to the intensity logits.")
 
 def training_args(parser):
     group = parser.add_argument_group("Training specification arguments.")
@@ -77,14 +79,17 @@ def evaluation_args(parser):
     group.add_argument("--classify_latents", action='store_true', help="On validation, train a logistic regression model on latent vectors to classify PP id and report results.")
     group.add_argument("--visualize", action="store_true", help="In evaluate.py selects the visualization script to run.")
     group.add_argument("--sample_generations", action="store_true", help="In evaluate.py selects the generations script to run.")
-    group.add_argument("--num_samples", type=int, default=1000, help="Number of sequences to generate samples from.")
+    group.add_argument("--next_event_prediction", action="store_true", help="In evaluate.py selects the next event prediction task to run.")
+    group.add_argument("--anomaly_detection", action="store_true", help="In evaluate.py selects the anomaly detection task to run.")
+    group.add_argument("--num_samples", type=int, default=1024, help="Number of sequences to generate samples from.")
     group.add_argument("--samples_per_sequence", type=int, default=1, help="Number of samples to generate per sequence.")
     group.add_argument("--get_latents", action="store_true", help="Loads a model and saves latent states from the encoder.")
     group.add_argument("--top_k", type=int, default=0, help="Enables top_k sampling for marks.")
     group.add_argument("--top_p", type=float, default=0.0, help="Enables top_p sampling for marks.")
     group.add_argument("--likelihood_over_time", action="store_true", help="In evaluate.py analyzes likelihood over time for a given model.")
     group.add_argument("--likelihood_resolution", type=float, default=1.0, help="When likelihood_over_time is enabled, this defines the bucket width to bin likelihood differences into.")
-    #group.add_argument("--", type=, default=, help="")
+    group.add_argument("--pin_test_memory", action="store_true", help="Pin memory for test dataloader.")
+    #group.add_argument("--", type=, default=, help="")pin_test_memory
 
 def sampling_args(parser):
     group = parser.add_argument_group("Sampling specification arguments.")

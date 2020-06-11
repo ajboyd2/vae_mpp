@@ -50,7 +50,11 @@ class IntensityNet(nn.Module):
 
         self.zero_inflated = zero_inflated
         if zero_inflated:
+            print("ZERO INFLATED NHP")
             self.zero_prob_net = nn.Sequential(nn.Linear(hidden_size, num_channels), nn.Sigmoid())
+        else:
+            print("NOT USING ZERO INFLATION")
+
 
     def forward(self, *args):
         x = torch.cat(args, dim=-1)
@@ -216,6 +220,7 @@ class HawkesDecoder(nn.Module):
         latent_size=None,
         estimate_init_state=True,
         zero_inflated=False,
+        personalized_head=False,
     ):
         super().__init__()
         if latent_size is None:
@@ -231,6 +236,14 @@ class HawkesDecoder(nn.Module):
         self.soft_plus_params = torch.nn.Parameter(torch.randn(self.num_channels,) * 0.0001)
 
         self.hidden_to_intensity_logits = nn.Linear(recurrent_hidden_size, self.num_channels)
+
+        self.personalized_head = personalized_head
+        if personalized_head:
+            print("USING PERSONALIZED INTENSITY HEAD")
+            self.user_emb_to_intensity_logits = nn.Linear(latent_size, self.num_channels, bias=True)
+            self.user_emb_to_intensity_logits.weight.data = torch.rand_like(self.user_emb_to_intensity_logits.weight.data)*0.001
+            self.user_emb_to_intensity_logits.bias.data = torch.rand_like(self.user_emb_to_intensity_logits.bias.data)*0.001
+
 
         self.estimate_init_state = estimate_init_state
         if self.estimate_init_state:
@@ -352,7 +365,12 @@ class HawkesDecoder(nn.Module):
 
         _, h_t = self.decay(c, c_bar, o_t, delta_t, time_embedding)
 
-        intensity_values = F.softplus(self.hidden_to_intensity_logits(h_t))
+        if self.personalized_head:
+            user_emb_logits = self.user_emb_to_intensity_logits(latent_state).unsqueeze(1)
+        else:
+            user_emb_logits = 0
+
+        intensity_values = F.softplus(self.hidden_to_intensity_logits(h_t) + user_emb_logits)
         all_log_mark_intensities = torch.log(intensity_values + 1e-12)
         if self.zero_inflated:
             zero_probs = self.zero_prob_net(h_t)
@@ -376,6 +394,7 @@ class RMTPPDecoder(nn.Module):
         latent_size=None,
         estimate_init_state=True,
         zero_inflated=False,
+        personalized_head=False,
     ):
         super().__init__()
         if latent_size is None:
@@ -384,6 +403,7 @@ class RMTPPDecoder(nn.Module):
         self.time_embedding = time_embedding
         self.num_channels, self.channel_embedding_size = self.channel_embedding.weight.shape
         self.latent_size = latent_size
+        self.personalized_head = personalized_head
 
         self.recurrent_input_size = self.channel_embedding_size + latent_size + self.time_embedding.embedding_dim
         self.recurrent_hidden_size = recurrent_hidden_size
@@ -400,6 +420,12 @@ class RMTPPDecoder(nn.Module):
         self.time_to_intensity_logits.weight.data = torch.rand_like(self.time_to_intensity_logits.weight.data)*0.001
         self.time_to_intensity_logits.bias.data = torch.rand_like(self.time_to_intensity_logits.bias.data)*0.001
 
+        if personalized_head:
+            print("USING PERSONALIZED INTENSITY HEAD")
+            self.user_emb_to_intensity_logits = nn.Linear(latent_size, self.num_channels, bias=False)
+            self.user_emb_to_intensity_logits.weight.data = torch.rand_like(self.user_emb_to_intensity_logits.weight.data)*0.001
+    
+
         self.estimate_init_state = estimate_init_state
         if self.estimate_init_state:
             print("ESTIMATING INITIAL STATE")
@@ -413,9 +439,12 @@ class RMTPPDecoder(nn.Module):
                 param=nn.Parameter(xavier_truncated_normal(size=(1, 1, 2*recurrent_hidden_size), no_average=True))
             )
 
+        self.zero_inflated = zero_inflated
         if zero_inflated:
             print("ZERO INFLATED RMTPP")
             self.zero_prob_net = nn.Sequential(nn.Linear(recurrent_hidden_size, self.num_channels), nn.Sigmoid())
+        else:
+            print("NOT USING ZERO INFLATION")
 
 
     def get_init_states(self, batch_size, latent_state=None):
@@ -488,6 +517,10 @@ class RMTPPDecoder(nn.Module):
         time_logits = self.time_to_intensity_logits(time_embedding)
 
         all_log_mark_intensities = hs_logits + time_logits
+        
+        if self.personalized_head:
+            user_emb_logits = self.user_emb_to_intensity_logits(latent_state).unsqueeze(1)
+            all_log_mark_intensities += user_emb_logits
 
         if self.zero_inflated:
             zero_probs = self.zero_prob_net(h_t)
@@ -499,5 +532,5 @@ class RMTPPDecoder(nn.Module):
         return {
             "all_log_mark_intensities": all_log_mark_intensities,
             "total_intensity": total_intensity,
-            "zero_probs": zeor_probs,
+            "zero_probs": zero_probs,
         }

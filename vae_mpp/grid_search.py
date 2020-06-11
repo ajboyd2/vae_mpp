@@ -26,12 +26,13 @@ if __name__ == "__main__":
     opts = [
 #        {"train_data_percentage": 0.01}, 
 #        {"train_data_percentage": 0.05}, 
-        {"train_data_percentage": 0.1, "save_epochs": 6, "valid_epochs": 6,}, 
-        {"train_data_percentage": 0.2, "save_epochs": 6, "valid_epochs": 6,}, 
-        {"train_data_percentage": 0.3, "save_epochs": 4, "valid_epochs": 4,}, 
-        {"train_data_percentage": 0.5, "save_epochs": 4, "valid_epochs": 4,}, 
-        {"train_data_percentage": 0.7, "save_epochs": 2, "valid_epochs": 2,}, 
-        {"train_data_percentage": 0.9, "save_epochs": 2, "valid_epochs": 2,}, 
+        {"train_data_percentage": 0.1, "save_epochs": 12, "valid_epochs": 12,}, 
+#        {"train_data_percentage": 0.2, "save_epochs": 12, "valid_epochs": 12,}, 
+        {"train_data_percentage": 0.2, "save_epochs": 8, "valid_epochs": 8,}, 
+        {"train_data_percentage": 0.3, "save_epochs": 8, "valid_epochs": 8,}, 
+        {"train_data_percentage": 0.5, "save_epochs": 8, "valid_epochs": 8,}, 
+        {"train_data_percentage": 0.7, "save_epochs": 4, "valid_epochs": 4,}, 
+        {"train_data_percentage": 0.9, "save_epochs": 4, "valid_epochs": 4,}, 
 #        {"train_data_percentage": 0.95}, 
 #        {"train_data_percentage": 0.99}, 
         {"train_data_percentage": 1.0, "save_epochs": 2, "valid_epochs": 2,},
@@ -77,6 +78,7 @@ if __name__ == "__main__":
         {"latent_size": 8, "dec_recurrent_hidden_size": 16, "enc_hidden_size": 16,},
     ]; name = "latent"
     '''
+    orig_lr = args.lr
 
     #{seq_len: {"hidden_sizes":[], "num_layers":[], "bidir":[], "train_samples":[], "scores":[]} for seq_len in eval_seq_lengths}
     try:
@@ -119,7 +121,9 @@ if __name__ == "__main__":
         #args.use_delta_time = options["use_delta_time"]
         for k,v in options.items():
             args.__dict__[k] = v
+        
         print("Starting run with options: {}".format(options))
+
         #args.recurrent_layers = nl
         #args.recurrent_bidirectional = bi
         #args.train_samples = ts
